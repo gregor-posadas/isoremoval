@@ -32,6 +32,13 @@ initial_concentration = st.sidebar.number_input(
     step=0.1
 )
 
+# Depth Units Selection
+depth_units = st.sidebar.selectbox(
+    "Select Units for Depth",
+    options=["Meters (m)", "Feet (ft)", "Centimeters (cm)", "Inches (in)"],
+    index=0
+)
+
 # Function to parse the uploaded Excel file
 def parse_excel(file):
     try:
@@ -113,6 +120,15 @@ uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls
 # Provide a download link for the sample Excel file
 st.sidebar.markdown(get_table_download_link(), unsafe_allow_html=True)
 
+# Maximum Depth Input
+max_depth = st.sidebar.number_input(
+    "Maximum Depth",
+    min_value=0.0,
+    value=0.0,
+    step=0.1,
+    help="Specify the maximum depth for the plots. If left at 0, the program will use the maximum depth from the uploaded Excel file."
+)
+
 if uploaded_file is not None:
     depths, times, concentrations = parse_excel(uploaded_file)
     if depths is None or times is None or concentrations is None:
@@ -125,6 +141,14 @@ else:
 if concentrations.shape[0] != len(depths) or concentrations.shape[1] != len(times):
     st.error("The shape of the concentrations matrix does not match the number of depths and times.")
     st.stop()
+
+# Determine maximum depth
+if max_depth > 0:
+    plot_max_depth = max_depth
+    if plot_max_depth < np.max(depths):
+        st.warning(f"Specified maximum depth ({plot_max_depth} {depth_units}) is less than the maximum depth in data ({np.max(depths)} {depth_units}). Some data may be excluded from the plot.")
+else:
+    plot_max_depth = np.max(depths)
 
 # Main processing
 st.header("Generated Isoremoval Curves")
@@ -164,7 +188,7 @@ for percent in percent_removal_reference:
             else:
                 interpolated_depth = np.nan
 
-        if np.isnan(interpolated_depth) or interpolated_depth < 0 or interpolated_depth > np.max(depths):
+        if np.isnan(interpolated_depth) or interpolated_depth < 0 or interpolated_depth > plot_max_depth:
             interpolated_depth = np.nan
 
         depths_list.append(interpolated_depth)
@@ -191,9 +215,9 @@ for percent, color in zip(percent_removal_reference, colors):
 
 # Set plot labels, title, and grid
 ax.set_xlabel('Time (min)', fontsize=14, weight='bold')
-ax.set_ylabel('Depth (m)', fontsize=14, weight='bold')
+ax.set_ylabel(f'Depth ({depth_units})', fontsize=14, weight='bold')
 ax.set_title('Isoremoval Curves', fontsize=16, weight='bold')
-ax.set_ylim(max(depths), min(depths))  # Invert y-axis
+ax.set_ylim(plot_max_depth, 0)  # Invert y-axis to have depth increasing downward
 ax.grid(color='gray', linestyle='--', linewidth=0.5)
 
 # Adjust the bottom margin to accommodate the legend
@@ -277,7 +301,7 @@ for idx, percent in enumerate(percent_removal_reference):
     )
     ax_sub.set_title(f'{percent:.0f}% Removal', fontsize=12, weight='bold')
     ax_sub.set_xlabel('Time (min)', fontsize=10, weight='bold')
-    ax_sub.set_ylabel('Depth (m)', fontsize=10, weight='bold')
+    ax_sub.set_ylabel(f'Depth ({depth_units})', fontsize=10, weight='bold')
     ax_sub.invert_yaxis()  # Depth increases downward
     ax_sub.grid(color='gray', linestyle='--', linewidth=0.5)
     ax_sub.legend(fontsize=8, frameon=True)

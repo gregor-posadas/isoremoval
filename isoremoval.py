@@ -4,7 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from matplotlib.patches import FancyBboxPatch
-import io
+import base64
+from io import BytesIO
 
 # Set the page configuration
 st.set_page_config(
@@ -31,29 +32,6 @@ initial_concentration = st.sidebar.number_input(
     step=0.1
 )
 
-# Concentrations Input
-st.sidebar.subheader("Upload Data File")
-st.sidebar.markdown("""
-Upload an Excel file containing depths, times, and concentrations.
-
-**Expected Format:**
-
-- **First Row:** The first cell can be labeled (e.g., "Depth (m)"), followed by time points in minutes.
-- **First Column:** Depth values in meters corresponding to each row.
-- **Data Cells:** Concentration values (mg/L) for each depth and time.
-
-**Example:**
-
-| Depth (m) | 10 | 20 | 35 | 50 | 70 | 85 |
-|-----------|----|----|----|----|----|----|
-| 0.5       | 14 | 10 | 7  | 6.2| 5  | 4  |
-| 1.0       | 15 | 13 |10.6|8.2 |7   |6   |
-| 1.5       |15.4|14.2|12 |10 |7.8 |7  |
-| 2.0       |16 |14.6|12.6|11 |9  |8   |
-| 2.5       |17 |15 |13 |11.4|10 |8.8 |
-""")
-uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
-
 # Function to parse the uploaded Excel file
 def parse_excel(file):
     try:
@@ -78,6 +56,63 @@ def parse_excel(file):
         st.error(f"Error reading Excel file: {e}")
         return None, None, None
 
+# Provide a downloadable sample Excel file
+def generate_sample_excel():
+    # Define the data
+    data = {
+        'Depth (m)': [0.5, 1.0, 1.5, 2.0, 2.5],
+        10: [14, 15, 15.4, 16, 17],
+        20: [10, 13, 14.2, 14.6, 15],
+        35: [7, 10.6, 12, 12.6, 13],
+        50: [6.2, 8.2, 10, 11, 11.4],
+        70: [5, 7, 7.8, 9, 10],
+        85: [4, 6, 7, 8, 8.8]
+    }
+
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    columns = ['Depth (m)', 10, 20, 35, 50, 70, 85]
+    df = df[columns]
+
+    # Convert DataFrame to Excel in memory
+    towrite = BytesIO()
+    df.to_excel(towrite, index=False, engine='openpyxl')
+    towrite.seek(0)
+    return towrite
+
+# Encode to base64 for download
+def get_table_download_link():
+    sample_excel = generate_sample_excel()
+    b64 = base64.b64encode(sample_excel.read()).decode()
+    href = f'<a href="data:application/octet-stream;base64,{b64}" download="isoremoval_sample.xlsx">Download Sample Excel File</a>'
+    return href
+
+# Upload Data File
+st.sidebar.subheader("Upload Data File")
+st.sidebar.markdown("""
+Upload an Excel file containing depths, times, and concentrations.
+
+**Expected Format:**
+
+- **First Row:** The first cell can be labeled (e.g., "Depth (m)"), followed by time points in minutes.
+- **First Column:** Depth values in meters corresponding to each row.
+- **Data Cells:** Concentration values (mg/L) for each depth and time.
+
+**Example:**
+
+| Depth (m) | 10 | 20 | 35 | 50 | 70 | 85 |
+|-----------|----|----|----|----|----|----|
+| 0.5       | 14 | 10 | 7  | 6.2| 5  | 4  |
+| 1.0       | 15 | 13 |10.6|8.2 |7   |6   |
+| 1.5       |15.4|14.2|12 |10 |7.8 |7  |
+| 2.0       |16 |14.6|12.6|11 |9  |8   |
+| 2.5       |17 |15 |13 |11.4|10 |8.8 |
+""")
+uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
+
+# Provide a download link for the sample Excel file
+st.sidebar.markdown(get_table_download_link(), unsafe_allow_html=True)
+
 if uploaded_file is not None:
     depths, times, concentrations = parse_excel(uploaded_file)
     if depths is None or times is None or concentrations is None:
@@ -101,9 +136,9 @@ plt.rcParams['text.usetex'] = False
 percent_removals = (initial_concentration - concentrations) / initial_concentration * 100
 removal_df = pd.DataFrame(percent_removals, index=depths, columns=times)
 
-# Reference times and percent removals for interpolation
-times_reference = np.arange(0, max(times) + 10, step=10)
-percent_removal_reference = np.linspace(10, 90, 9)
+# Reference times and expanded percent removals for interpolation
+times_reference = np.arange(0, max(times) + 10, step=5)  # Increased resolution for times
+percent_removal_reference = np.arange(5, 100, 5)  # 5%,10%,...,95%
 
 # Prepare interpolation
 interpolated_depths = pd.DataFrame(index=times_reference, columns=percent_removal_reference)
@@ -140,10 +175,11 @@ interpolated_depths = interpolated_depths.apply(pd.to_numeric, errors='coerce')
 interpolated_depths.replace([np.inf, -np.inf], np.nan, inplace=True)
 
 # Plotting
-fig, ax = plt.subplots(figsize=(12, 8))
+fig, ax = plt.subplots(figsize=(14, 10))
 
-# High-contrast colormap
-colors = plt.cm.tab10(np.linspace(0, 1, len(percent_removal_reference)))
+# High-contrast colormap with sufficient distinct colors
+cmap = plt.get_cmap('tab20')  # 'tab20' has 20 distinct colors
+colors = cmap(np.linspace(0, 1, len(percent_removal_reference)))
 
 for percent, color in zip(percent_removal_reference, colors):
     times_with_origin = interpolated_depths.index
@@ -151,23 +187,26 @@ for percent, color in zip(percent_removal_reference, colors):
 
     mask = (~np.isnan(depths_with_origin)) & (depths_with_origin >= 0)
     ax.plot(times_with_origin[mask], depths_with_origin[mask], label=f'{percent:.0f}% Removal',
-             color=color, linewidth=2, marker='o', markersize=4)
+             color=color, linewidth=1.5, marker='o', markersize=3)
 
 # Set plot labels, title, and grid
-ax.set_xlabel('Time (min)', fontsize=12, weight='bold')
-ax.set_ylabel('Depth (m)', fontsize=12, weight='bold')
-ax.set_title('Isoremoval Curves', fontsize=14, weight='bold')
+ax.set_xlabel('Time (min)', fontsize=14, weight='bold')
+ax.set_ylabel('Depth (m)', fontsize=14, weight='bold')
+ax.set_title('Isoremoval Curves', fontsize=16, weight='bold')
 ax.set_ylim(max(depths), min(depths))  # Invert y-axis
 ax.grid(color='gray', linestyle='--', linewidth=0.5)
 
 # Legend - Spread horizontally with 2.5D effect
+# Due to many labels, it's better to place the legend in a scrollable area or use a smaller font
+# Alternatively, use a color bar or interactive legend
+
 legend = ax.legend(
     title='Percent Removal',
     loc='upper center',
-    bbox_to_anchor=(0.5, -0.15),
-    ncol=4,
-    fontsize=10,
-    title_fontsize=12,
+    bbox_to_anchor=(0.5, -0.05),
+    ncol=5,
+    fontsize=8,
+    title_fontsize=10,
     frameon=True
 )
 legend.get_title().set_weight('bold')  # Make legend title bold
@@ -208,7 +247,7 @@ st.subheader("Isoremoval Subplots for Each Percent Removal")
 
 # Define the figure and subplots
 n_subplots = len(percent_removal_reference)
-n_cols = 3
+n_cols = 4  # Increased columns to accommodate more subplots per row
 n_rows = (n_subplots + n_cols - 1) // n_cols  # Ceiling division
 
 fig_sub, axes = plt.subplots(
@@ -231,8 +270,10 @@ for idx, percent in enumerate(percent_removal_reference):
         times_with_origin[mask],
         depths_with_origin[mask],
         label=f'{percent:.0f}% Removal',
-        color=plt.cm.tab10(idx / len(percent_removal_reference)),
-        linewidth=2
+        color=cmap(idx / len(percent_removal_reference)),
+        linewidth=1.5,
+        marker='o',
+        markersize=3
     )
     ax_sub.set_title(f'{percent:.0f}% Removal', fontsize=12, weight='bold')
     ax_sub.set_xlabel('Time (min)', fontsize=10, weight='bold')

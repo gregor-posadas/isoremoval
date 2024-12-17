@@ -187,7 +187,7 @@ for percent, color in zip(percent_removal_reference, colors):
 
     mask = (~np.isnan(depths_with_origin)) & (depths_with_origin >= 0)
     ax.plot(times_with_origin[mask], depths_with_origin[mask], label=f'{percent:.0f}% Removal',
-             color=color, linewidth=1.5, marker='o', markersize=3)
+            color=color, linewidth=1.5, marker='o', markersize=3)
 
 # Set plot labels, title, and grid
 ax.set_xlabel('Time (min)', fontsize=14, weight='bold')
@@ -196,15 +196,15 @@ ax.set_title('Isoremoval Curves', fontsize=16, weight='bold')
 ax.set_ylim(max(depths), min(depths))  # Invert y-axis
 ax.grid(color='gray', linestyle='--', linewidth=0.5)
 
-# Legend - Spread horizontally with 2.5D effect
-# Due to many labels, it's better to place the legend in a scrollable area or use a smaller font
-# Alternatively, use a color bar or interactive legend
+# Adjust the bottom margin to accommodate the legend
+plt.subplots_adjust(bottom=0.25)  # Increased bottom margin
 
+# Legend - Spread horizontally with increased number of columns
 legend = ax.legend(
     title='Percent Removal',
     loc='upper center',
-    bbox_to_anchor=(0.5, -0.05),
-    ncol=5,
+    bbox_to_anchor=(0.5, -0.25),  # Adjusted to move legend further down
+    ncol=7,  # Increased number of columns for horizontal spread
     fontsize=8,
     title_fontsize=10,
     frameon=True

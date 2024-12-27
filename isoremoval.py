@@ -18,7 +18,8 @@ st.set_page_config(
 st.title("Isoremoval Curves Generator")
 
 st.markdown("""
-This application allows you to generate Isoremoval Curves based on your own data inputs. You can specify your own depths, times, concentrations, and initial concentration by uploading a properly formatted Excel file.
+This application allows you to generate Isoremoval Curves based on your own data inputs. 
+You can specify your own depths, times, concentrations, and initial concentration by uploading a properly formatted Excel file.
 """)
 
 # Sidebar for user inputs
@@ -50,6 +51,7 @@ def parse_excel(file):
         depths = df.iloc[:,0].values
         times = df.columns[1:].astype(float).values
         concentrations = df.iloc[:,1:].values
+        
         # Validate data
         if not np.issubdtype(df.iloc[:,0].dtype, np.number):
             st.error("Depths should be numeric.")
@@ -58,6 +60,7 @@ def parse_excel(file):
             if not np.issubdtype(df[col].dtype, np.number):
                 st.error(f"Time column '{col}' contains non-numeric values.")
                 return None, None, None
+                
         return depths, times, concentrations
     except Exception as e:
         st.error(f"Error reading Excel file: {e}")
@@ -111,9 +114,9 @@ Upload an Excel file containing depths, times, and concentrations.
 |-----------|----|----|----|----|----|----|
 | 0.5       | 14 | 10 | 7  | 6.2| 5  | 4  |
 | 1.0       | 15 | 13 |10.6|8.2 |7   |6   |
-| 1.5       |15.4|14.2|12 |10 |7.8 |7  |
-| 2.0       |16 |14.6|12.6|11 |9  |8   |
-| 2.5       |17 |15 |13 |11.4|10 |8.8 |
+| 1.5       |15.4|14.2|12  |10  |7.8 |7   |
+| 2.0       |16  |14.6|12.6|11  |9   |8   |
+| 2.5       |17  |15  |13  |11.4|10  |8.8 |
 """)
 uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx", "xls"])
 
@@ -146,7 +149,9 @@ if concentrations.shape[0] != len(depths) or concentrations.shape[1] != len(time
 if max_depth > 0:
     plot_max_depth = max_depth
     if plot_max_depth < np.max(depths):
-        st.warning(f"Specified maximum depth ({plot_max_depth} {depth_units}) is less than the maximum depth in data ({np.max(depths)} {depth_units}). Some data may be excluded from the plot.")
+        st.warning(
+            f"Specified maximum depth ({plot_max_depth} {depth_units}) is less than the maximum depth in data ({np.max(depths)} {depth_units}). Some data may be excluded from the plot."
+        )
 else:
     plot_max_depth = np.max(depths)
 
@@ -160,34 +165,93 @@ plt.rcParams['text.usetex'] = False
 percent_removals = (initial_concentration - concentrations) / initial_concentration * 100
 removal_df = pd.DataFrame(percent_removals, index=depths, columns=times)
 
-# Reference times and expanded percent removals for interpolation
-times_reference = np.arange(0, max(times) + 10, step=5)  # Increased resolution for times
-percent_removal_reference = np.arange(5, 100, 5)  # 5%,10%,...,95%
+##########################################################################
+# 1. Display Table of Removal Efficiencies for Each Time and Depth
+##########################################################################
+st.subheader("Percent Removal as a Function of Time and Depth")
 
-# Prepare interpolation
+# We will label rows as "Depth (user-selected units)" and columns as "Time (min)"
+removal_df_display = removal_df.copy()
+removal_df_display.index.name = f"Depth ({depth_units})"
+removal_df_display.columns.name = "Time (min)"
+
+# Limit to 2 decimal places
+removal_df_display = removal_df_display.round(2)
+
+st.dataframe(removal_df_display)
+
+##########################################################################
+# 2. User-Specified (or Default) Percent Removal Curves to Plot
+##########################################################################
+st.sidebar.subheader("Select Which % Removal Curves to Plot")
+
+default_curves = "10,20,30,40,50,60,70,80"
+user_curves_input = st.sidebar.text_input(
+    "Enter comma-separated % values (between 1 and 99):", 
+    value=default_curves
+)
+
+# Parse the user input and fall back to default if parsing fails or empty
+try:
+    user_curves_list = [int(x.strip()) for x in user_curves_input.split(",")]
+    # Keep only valid values between 1 and 99
+    user_curves_list = [val for val in user_curves_list if 1 <= val < 100]
+except:
+    user_curves_list = [int(x.strip()) for x in default_curves.split(",")]
+
+if len(user_curves_list) == 0:
+    user_curves_list = [int(x.strip()) for x in default_curves.split(",")]
+
+# Sort and remove duplicates
+percent_removal_reference = sorted(list(set(user_curves_list)))
+
+##########################################################################
+# Interpolation for Isoremoval Curves
+##########################################################################
+times_reference = np.arange(0, max(times) + 10, step=5)  # Increased resolution for times
+
+# Prepare a DataFrame to hold interpolated depths
 interpolated_depths = pd.DataFrame(index=times_reference, columns=percent_removal_reference)
 
+# Create interpolation function for each depth (over time)
 interp_funcs_over_time = {}
 for depth in removal_df.index:
-    interp_funcs_over_time[depth] = interp1d(removal_df.columns, removal_df.loc[depth], kind='linear', fill_value='extrapolate')
+    interp_funcs_over_time[depth] = interp1d(
+        removal_df.columns, 
+        removal_df.loc[depth], 
+        kind='linear', 
+        fill_value='extrapolate'
+    )
 
+# For each percent removal in user-specified list, find depth vs. time curve
 for percent in percent_removal_reference:
     depths_list = []
-    for time in times_reference:
-        if time == 0:
+    for time_val in times_reference:
+        if time_val == 0:
+            # At time=0, we can define the "depth" as 0 for all removal (or NaN).
+            # For a typical scenario, no removal has occurred at time=0, so depth=0.
             interpolated_depth = 0
         else:
-            depths_for_time = np.array([interp_funcs_over_time[depth](time) for depth in removal_df.index])
+            # Evaluate the removal function at this time for all depths
+            depths_for_time = np.array([interp_funcs_over_time[d](time_val) for d in removal_df.index])
+            # We only consider values that are between 0% and 100% removal
             valid_mask = (depths_for_time >= 0) & (depths_for_time <= 100)
             valid_depths = removal_df.index[valid_mask]
             valid_percent_removals = depths_for_time[valid_mask]
 
             if len(valid_percent_removals) > 1:
-                interp_func_over_depth = interp1d(valid_percent_removals, valid_depths, kind='linear', bounds_error=False, fill_value='extrapolate')
+                interp_func_over_depth = interp1d(
+                    valid_percent_removals, 
+                    valid_depths, 
+                    kind='linear', 
+                    bounds_error=False, 
+                    fill_value='extrapolate'
+                )
                 interpolated_depth = interp_func_over_depth(percent)
             else:
                 interpolated_depth = np.nan
 
+        # Discard if outside the plot range or NaN
         if np.isnan(interpolated_depth) or interpolated_depth < 0 or interpolated_depth > plot_max_depth:
             interpolated_depth = np.nan
 
@@ -195,10 +259,13 @@ for percent in percent_removal_reference:
 
     interpolated_depths[percent] = depths_list
 
+# Clean up infinite or invalid values
 interpolated_depths = interpolated_depths.apply(pd.to_numeric, errors='coerce')
 interpolated_depths.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-# Plotting
+##########################################################################
+# Plotting the Isoremoval Curves
+##########################################################################
 fig, ax = plt.subplots(figsize=(14, 10))
 
 # High-contrast colormap with sufficient distinct colors
@@ -210,8 +277,15 @@ for percent, color in zip(percent_removal_reference, colors):
     depths_with_origin = interpolated_depths[percent].values.astype(float)
 
     mask = (~np.isnan(depths_with_origin)) & (depths_with_origin >= 0)
-    ax.plot(times_with_origin[mask], depths_with_origin[mask], label=f'{percent:.0f}% Removal',
-            color=color, linewidth=1.5, marker='o', markersize=3)
+    ax.plot(
+        times_with_origin[mask], 
+        depths_with_origin[mask], 
+        label=f'{percent:.0f}% Removal',
+        color=color, 
+        linewidth=1.5, 
+        marker='o', 
+        markersize=3
+    )
 
 # Set plot labels, title, and grid
 ax.set_xlabel('Time (min)', fontsize=14, weight='bold')
@@ -221,29 +295,29 @@ ax.set_ylim(plot_max_depth, 0)  # Invert y-axis to have depth increasing downwar
 ax.grid(color='gray', linestyle='--', linewidth=0.5)
 
 # Adjust the bottom margin to accommodate the legend
-plt.subplots_adjust(bottom=0.25)  # Increased bottom margin
+plt.subplots_adjust(bottom=0.25)
 
-# Legend - Spread horizontally with increased number of columns
+# Legend - Spread horizontally with multiple columns
 legend = ax.legend(
     title='Percent Removal',
     loc='upper center',
-    bbox_to_anchor=(0.5, -0.25),  # Adjusted to move legend further down
-    ncol=7,  # Increased number of columns for horizontal spread
+    bbox_to_anchor=(0.5, -0.25),
+    ncol=7,
     fontsize=8,
     title_fontsize=10,
     frameon=True
 )
-legend.get_title().set_weight('bold')  # Make legend title bold
+legend.get_title().set_weight('bold')
 legend.get_frame().set_facecolor('#f9f9f9')
 legend.get_frame().set_edgecolor('gray')
 legend.get_frame().set_linewidth(1.5)
-legend.get_frame().set_boxstyle('round,pad=0.3,rounding_size=0.2')  # Rounded corners
-legend.get_frame().set_alpha(0.9)  # Slight transparency
+legend.get_frame().set_boxstyle('round,pad=0.3,rounding_size=0.2')
+legend.get_frame().set_alpha(0.9)
 
-# Adding shadow effect to the legend
+# Add a shadow effect to the legend
 legend_box = legend.get_frame()
 shadow_box = FancyBboxPatch(
-    (legend_box.get_x() - 0.02, legend_box.get_y() - 0.02),  # Shift slightly for shadow
+    (legend_box.get_x() - 0.02, legend_box.get_y() - 0.02), 
     legend_box.get_width() + 0.04,
     legend_box.get_height() + 0.04,
     boxstyle='round,pad=0.3,rounding_size=0.2',
@@ -257,21 +331,25 @@ ax.add_patch(shadow_box)
 plt.tight_layout()
 st.pyplot(fig)
 
-# Display the interpolated table
+##########################################################################
+# 3. Display the Interpolated Depths Table (Limited to 2 decimals)
+##########################################################################
 st.subheader("Interpolated Depths Table")
 st.write("Each cell represents the depth at which a specific percent removal occurs at a given time.")
 
-# Round the table for better readability
+# Round the table for better readability (limit to 2 decimals)
 interpolated_depths_display = interpolated_depths.round(2)
 interpolated_depths_display.index.name = "Time (min)"
 st.dataframe(interpolated_depths_display)
 
+##########################################################################
 # Additional Subplots
+##########################################################################
 st.subheader("Isoremoval Subplots for Each Percent Removal")
 
 # Define the figure and subplots
 n_subplots = len(percent_removal_reference)
-n_cols = 4  # Increased columns to accommodate more subplots per row
+n_cols = 4  # Adjust columns as desired
 n_rows = (n_subplots + n_cols - 1) // n_cols  # Ceiling division
 
 fig_sub, axes = plt.subplots(

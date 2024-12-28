@@ -8,7 +8,7 @@ import base64
 from io import BytesIO
 
 # -------------------------------------------------------------------------
-# Set Streamlit page config
+# Set page config
 # -------------------------------------------------------------------------
 st.set_page_config(
     page_title="Isoremoval Curves",
@@ -19,19 +19,20 @@ st.set_page_config(
 # -------------------------------------------------------------------------
 # Title and Intro
 # -------------------------------------------------------------------------
-st.title("Isoremoval Curves Generator (CSV or Excel)")
+st.title("Isoremoval Curves Generator (CSV or Excel) - With Second Interpolation for Overall Removal")
 
 st.markdown("""
-This application allows you to:
+This application:
 
-1. Upload your data (depths, times, concentrations) from **CSV or Excel**.
-2. Generate **isoremoval curves** for a selected range of removal percentages.
-3. Compute **suspended solids removal** vs. **detention time** and vs. **overflow rate**, 
-   based on batch-settling column data and a specified maximum depth.
+1. Reads depths, times, and concentrations (mg/L).
+2. Builds isoremoval curves for a selected range of removal percentages.
+3. **Crucially**: When calculating Overall_Removal_% at the time a curve hits the bottom, 
+   we do an **on-the-fly second interpolation** of all other curves at that exact time—ensuring 
+   no reliance on a discrete `times_reference` row.
 """)
 
 # -------------------------------------------------------------------------
-# Sidebar: Provide sample file and example table
+# Sidebar
 # -------------------------------------------------------------------------
 st.sidebar.header("Upload Data File")
 
@@ -60,7 +61,6 @@ def get_table_download_link():
 
 st.sidebar.markdown(get_table_download_link(), unsafe_allow_html=True)
 
-# Example table shown in the sidebar:
 st.sidebar.markdown("""
 **Expected Format (example):**
 
@@ -71,10 +71,6 @@ st.sidebar.markdown("""
 |  1.5      |15.4 |14.2 |12   |10   |7.8  |7    |
 |  2.0      |16   |14.6 |12.6 |11   |9    |8    |
 |  2.5      |17   |15   |13   |11.4 |10   |8.8  |
-
-*First column:* Depth in meters  
-*Column headers (beyond the first):* times in minutes  
-*Cells:* measured concentration (mg/L)
 """)
 
 uploaded_file = st.sidebar.file_uploader(
@@ -82,9 +78,7 @@ uploaded_file = st.sidebar.file_uploader(
     type=["csv", "xlsx", "xls"]
 )
 
-# -------------------------------------------------------------------------
-# Sidebar: Input Parameters
-# -------------------------------------------------------------------------
+# Input Parameters
 st.sidebar.header("Input Parameters")
 
 initial_concentration = st.sidebar.number_input(
@@ -105,45 +99,42 @@ max_depth = st.sidebar.number_input(
     min_value=0.0,
     value=0.0,
     step=0.1,
-    help="Specify the maximum depth for the plots. If 0, uses the maximum depth from data."
+    help="If 0, uses the maximum depth from data."
 )
 
 # -------------------------------------------------------------------------
-# Load and parse data
+# 1. Load / parse
 # -------------------------------------------------------------------------
 def load_data(uploaded_file):
     if uploaded_file is None:
         return None
-
-    file_ext = uploaded_file.name.split(".")[-1].lower()
-    if file_ext in ["xlsx", "xls"]:
-        df = pd.read_excel(uploaded_file)
-    elif file_ext == "csv":
-        df = pd.read_csv(uploaded_file)
+    ext = uploaded_file.name.split(".")[-1].lower()
+    if ext in ["xlsx", "xls"]:
+        return pd.read_excel(uploaded_file)
+    elif ext == "csv":
+        return pd.read_csv(uploaded_file)
     else:
-        st.error("Unsupported file format. Please upload .xlsx, .xls, or .csv")
+        st.error("Unsupported file format.")
         return None
-    return df
 
 def parse_input_data(df):
     try:
         for col in df.columns[1:]:
             df[col] = pd.to_numeric(df[col], errors='coerce')
-
-        depths = df.iloc[:, 0].values.astype(float)
+        depths = df.iloc[:,0].values.astype(float)
         try:
             times_float = df.columns[1:].astype(float)
-        except ValueError:
-            st.error("Could not parse column headers as float. Ensure they're numeric times.")
+        except:
+            st.error("Could not parse column headers as numeric times.")
             return None, None, None
-
         times = times_float.values
-        concentrations = df.iloc[:, 1:].values.astype(float)
+        concentrations = df.iloc[:,1:].values.astype(float)
         return depths, times, concentrations
     except Exception as e:
-        st.error(f"Error parsing data: {e}")
+        st.error(f"Error: {e}")
         return None, None, None
 
+# Wait for file
 if uploaded_file is None:
     st.info("Please upload a CSV or Excel file to continue.")
     st.stop()
@@ -157,15 +148,14 @@ if depths is None or times is None or concentrations is None:
     st.stop()
 
 if concentrations.shape[0] != len(depths) or concentrations.shape[1] != len(times):
-    st.error("The shape of the concentrations matrix does not match the number of depths and times.")
+    st.error("Shapes do not match number of depths/times.")
     st.stop()
 
 if max_depth > 0:
     plot_max_depth = max_depth
     if plot_max_depth < np.max(depths):
         st.warning(
-            f"Specified maximum depth ({plot_max_depth} {depth_units}) is less "
-            f"than the max depth in data ({np.max(depths)})."
+            f"Specified max depth {plot_max_depth} {depth_units} < data's max depth {np.max(depths)}"
         )
 else:
     plot_max_depth = np.max(depths)
@@ -175,204 +165,153 @@ else:
 # -------------------------------------------------------------------------
 st.subheader("Your Uploaded Data (Concentrations)")
 st.write("Below is the raw data you uploaded:")
-st.dataframe(df.style.format(precision=2))
+st.dataframe(df)
 
 # -------------------------------------------------------------------------
-# Compute and show Percent Removals
+# 2. Compute Removals
 # -------------------------------------------------------------------------
-percent_removals = (initial_concentration - concentrations) / initial_concentration * 100
+percent_removals = (initial_concentration - concentrations)/initial_concentration*100
 removal_df = pd.DataFrame(percent_removals, index=depths, columns=times)
+removal_df.index.name = f"Depth ({depth_units})"
+removal_df.columns.name = "Time (min)"
 
 st.subheader("Percent Removal (Table) vs. Time and Depth")
-removal_df_display = removal_df.round(2)
-removal_df_display.index.name = f"Depth ({depth_units})"
-removal_df_display.columns.name = "Time (min)"
-st.dataframe(removal_df_display)
+st.dataframe(removal_df.round(2))
 
 # -------------------------------------------------------------------------
-# User picks which % removal curves to plot
+# 3. Build isoremoval curves with times_reference
 # -------------------------------------------------------------------------
 st.sidebar.subheader("Select Which % Removal Curves to Plot")
 default_curves = "10,20,30,40,50,60,70,80"
-user_curves_input = st.sidebar.text_input(
-    "Enter comma-separated % values (1 to 99):",
+user_input = st.sidebar.text_input(
+    "Comma-separated % values:",
     value=default_curves
 )
 try:
-    user_curves_list = [int(x.strip()) for x in user_curves_input.split(",")]
-    user_curves_list = [val for val in user_curves_list if 1 <= val < 100]
+    user_list = [int(x.strip()) for x in user_input.split(",")]
+    user_list = [v for v in user_list if 1 <= v < 100]
 except:
-    user_curves_list = [10, 20, 30, 40, 50, 60, 70, 80]
+    user_list = [10,20,30,40,50,60,70,80]
 
-if len(user_curves_list) == 0:
-    user_curves_list = [10, 20, 30, 40, 50, 60, 70, 80]
+if not user_list:
+    user_list = [10,20,30,40,50,60,70,80]
 
-percent_removal_reference = sorted(list(set(user_curves_list)))
+percent_removal_reference = sorted(list(set(user_list)))
 
-# -------------------------------------------------------------------------
-# Build the Interpolated Depths Table (no partial extrapolation)
-# -------------------------------------------------------------------------
-times_reference = np.arange(0, max(times) + 10, step=5)
+times_reference = np.arange(0, max(times)+10, step=5)
 interpolated_depths = pd.DataFrame(index=times_reference, columns=percent_removal_reference)
 
-# Make a function for removal% vs. time for each depth
-interp_funcs_over_time = {}
+# For each depth, define time->removal function
+interp_time_removal = {}
 for d in removal_df.index:
-    tvals = removal_df.columns.values.astype(float)
-    rvals = removal_df.loc[d].values.astype(float)
-    interp_funcs_over_time[d] = interp1d(
-        tvals,
-        rvals,
-        kind='linear',
-        fill_value="extrapolate"  # we allow time extrap, but not removal extrap
+    t_ = removal_df.columns.values.astype(float)
+    r_ = removal_df.loc[d].values.astype(float)
+    interp_time_removal[d] = interp1d(
+        t_, r_, kind='linear', fill_value="extrapolate"
     )
 
-# Now invert removal->depth for each time, but if out-of-range, set NaN
+# invert removal->depth for each time
 for perc in percent_removal_reference:
     depth_list = []
-    for t_val in times_reference:
-        if t_val == 0:
-            # At time=0, let's define depth=0 for convenience
+    for tval in times_reference:
+        if tval==0:
             depth_list.append(0.0)
             continue
+        # Evaluate removal at all depths
+        r_array, d_array = [], []
+        for d_ in removal_df.index:
+            rr = interp_time_removal[d_](tval)
+            r_array.append(rr)
+            d_array.append(d_)
 
-        # Evaluate removal at each depth
-        r_array = []
-        d_array = []
-        for d_val in removal_df.index:
-            r_val = interp_funcs_over_time[d_val](t_val)
-            r_array.append(r_val)
-            d_array.append(d_val)
-
-        r_array = np.array(r_array, dtype=float)
-        d_array = np.array(d_array, dtype=float)
-
-        # Keep only 0..100
-        valid_mask = (r_array >= 0) & (r_array <= 100)
-        vr = r_array[valid_mask]
-        vd = d_array[valid_mask]
-        if len(vr) < 2:
+        r_array = np.array(r_array)
+        d_array = np.array(d_array)
+        mask_ = (r_array>=0)&(r_array<=100)
+        rr_val = r_array[mask_]
+        dd_val = d_array[mask_]
+        if len(rr_val)<2:
             depth_list.append(np.nan)
             continue
-
-        # Sort by removal ascending
-        idx_sort = np.argsort(vr)
-        vr_sorted = vr[idx_sort]
-        vd_sorted = vd[idx_sort]
-
-        # If perc is out of [vr_sorted[0], vr_sorted[-1]], set NaN instead of forcing partial extrap
-        if perc < vr_sorted[0] or perc > vr_sorted[-1]:
+        idx_s = np.argsort(rr_val)
+        rr_s = rr_val[idx_s]
+        dd_s = dd_val[idx_s]
+        if perc<rr_s[0] or perc>rr_s[-1]:
             depth_list.append(np.nan)
             continue
-
-        # Otherwise do a standard linear interpolation within that domain
-        idx_ = np.searchsorted(vr_sorted, perc)
-        if idx_ == 0:
-            depth_list.append(vd_sorted[0])
-        elif idx_ >= len(vr_sorted):
-            depth_list.append(vd_sorted[-1])
+        ixx = np.searchsorted(rr_s, perc)
+        if ixx==0:
+            depth_list.append(dd_s[0])
+        elif ixx>=len(rr_s):
+            depth_list.append(dd_s[-1])
         else:
-            r_lo, r_hi = vr_sorted[idx_-1], vr_sorted[idx_]
-            d_lo, d_hi = vd_sorted[idx_-1], vd_sorted[idx_]
-            if (r_hi == r_lo):
+            r_lo,r_hi = rr_s[ixx-1], rr_s[ixx]
+            d_lo,d_hi = dd_s[ixx-1], dd_s[ixx]
+            if abs(r_hi-r_lo)<1e-12:
                 depth_list.append(d_lo)
             else:
-                slope = (d_hi - d_lo) / (r_hi - r_lo)
-                cand_d = d_lo + slope * (perc - r_lo)
-                depth_list.append(cand_d)
-
+                slope = (d_hi-d_lo)/(r_hi-r_lo)
+                d_cand = d_lo + slope*(perc-r_lo)
+                depth_list.append(d_cand)
     depth_array = np.array(depth_list)
-    # clamp final to [0, plot_max_depth] if you want
     depth_array = np.clip(depth_array, 0, plot_max_depth)
     interpolated_depths[perc] = depth_array
 
-interpolated_depths = interpolated_depths.apply(pd.to_numeric, errors='coerce')
+# quick function to extend final segment
+def extend_curve_to_bottom(tvals,dvals,bottom):
+    if len(tvals)<2:
+        return tvals,dvals
+    if dvals[-1]>=bottom:
+        return tvals,dvals
+    d1,d2 = dvals[-2], dvals[-1]
+    t1,t2 = tvals[-2], tvals[-1]
+    if abs(t2-t1)<1e-12:
+        return tvals,dvals
+    slope = (d2-d1)/(t2-t1)
+    if abs(slope)<1e-15:
+        return tvals,dvals
+    t_ext = t2 + (bottom - d2)/slope
+    if t_ext>t2:
+        tvals_ext = np.append(tvals, t_ext)
+        dvals_ext = np.append(dvals, bottom)
+        return tvals_ext,dvals_ext
+    return tvals,dvals
 
 # -------------------------------------------------------------------------
-# Final Step: Only extend the last segment if it hasn't reached bottom
-# -------------------------------------------------------------------------
-def extend_curve_to_bottom(t_vals, d_vals, bottom_depth):
-    """
-    Extend the curve from the last two valid points if the final depth < bottom_depth.
-    Otherwise, do nothing. 
-    """
-    if len(t_vals) < 2:
-        return t_vals, d_vals
-    d_last = d_vals[-1]
-    if d_last >= bottom_depth:
-        return t_vals, d_vals
-    # linear extension
-    t2, d2 = t_vals[-1], d_vals[-1]
-    t1, d1 = t_vals[-2], d_vals[-2]
-    if t2 == t1:
-        return t_vals, d_vals
-    slope = (d2 - d1)/(t2 - t1)
-    if abs(slope) < 1e-15:
-        return t_vals, d_vals
-    # Solve for t_ext so that depth=bottom_depth
-    # bottom_depth = d2 + slope*(t_ext - t2)
-    t_ext = t2 + (bottom_depth - d2)/slope
-    if t_ext > t2:
-        t_vals_ext = np.append(t_vals, t_ext)
-        d_vals_ext = np.append(d_vals, bottom_depth)
-        return t_vals_ext, d_vals_ext
-    return t_vals, d_vals
-
-# -------------------------------------------------------------------------
-# Plot the main Isoremoval Curves
+# Plot the curves
 # -------------------------------------------------------------------------
 st.subheader("Generated Isoremoval Curves")
 
-fig, ax = plt.subplots(figsize=(14, 10))
-plt.rcParams['text.usetex'] = False
-cmap = plt.get_cmap('tab20')
-colors = cmap(np.linspace(0, 1, len(percent_removal_reference)))
+fig, ax = plt.subplots(figsize=(14,10))
+colors_ = plt.get_cmap('tab20')(np.linspace(0,1,len(percent_removal_reference)))
 
-for perc, color in zip(percent_removal_reference, colors):
-    depth_ser = interpolated_depths[perc].values.astype(float)
-    time_ser = interpolated_depths.index.values.astype(float)
-
-    mask = ~np.isnan(depth_ser)
-    t_valid = time_ser[mask]
-    d_valid = depth_ser[mask]
-    if len(t_valid) < 2:
+for perc,col in zip(percent_removal_reference,colors_):
+    d_series = interpolated_depths[perc].values.astype(float)
+    t_series = interpolated_depths.index.values.astype(float)
+    mask__ = ~np.isnan(d_series)
+    tt = t_series[mask__]
+    dd = d_series[mask__]
+    if len(tt)<2:
         continue
-    # sort by time
-    idxsort = np.argsort(t_valid)
-    t_valid = t_valid[idxsort]
-    d_valid = d_valid[idxsort]
+    isrt = np.argsort(tt)
+    tt = tt[isrt]
+    dd = dd[isrt]
+    # extend
+    tt_ext,dd_ext = extend_curve_to_bottom(tt,dd, plot_max_depth)
+    ax.plot(tt_ext, dd_ext, color=col, label=f"{perc}%")
 
-    # extend if needed
-    t_ext, d_ext = extend_curve_to_bottom(t_valid, d_valid, plot_max_depth)
-
-    ax.plot(t_ext, d_ext, color=color, label=f'{perc}%')
-
-ax.set_xlabel('Time (min)', fontsize=14, weight='bold')
-ax.set_ylabel(f'Depth ({depth_units})', fontsize=14, weight='bold')
-ax.set_title('Isoremoval Curves', fontsize=16, weight='bold')
-ax.set_ylim(plot_max_depth, 0)
+ax.set_xlabel("Time (min)", fontsize=14, weight='bold')
+ax.set_ylabel(f"Depth ({depth_units})", fontsize=14, weight='bold')
+ax.set_title("Isoremoval Curves", fontsize=16, weight='bold')
+ax.set_ylim(plot_max_depth,0)
 ax.grid(True, linestyle='--', linewidth=0.5)
-
-# Clean up legend duplicates
-handles, labels = ax.get_legend_handles_labels()
-unique_labels = {}
-new_handles = []
-new_labels = []
-for h, l in zip(handles, labels):
-    if l not in unique_labels:
-        unique_labels[l] = True
-        new_handles.append(h)
-        new_labels.append(l)
-
+plt.subplots_adjust(bottom=0.25)
+handles,labels = ax.get_legend_handles_labels()
 legend = ax.legend(
-    new_handles, new_labels,
+    handles,labels,
     title='Percent Removal',
     loc='upper center',
     bbox_to_anchor=(0.5, -0.25),
-    ncol=6,
-    fontsize=8,
-    title_fontsize=10,
-    frameon=True
+    ncol=6,fontsize=8, title_fontsize=10,frameon=True
 )
 legend.get_title().set_weight('bold')
 legend.get_frame().set_facecolor('#f9f9f9')
@@ -380,219 +319,227 @@ legend.get_frame().set_edgecolor('gray')
 legend.get_frame().set_linewidth(1.5)
 legend.get_frame().set_boxstyle('round,pad=0.3,rounding_size=0.2')
 legend.get_frame().set_alpha(0.9)
-
 legend_box = legend.get_frame()
 shadow_box = FancyBboxPatch(
-    (legend_box.get_x() - 0.02, legend_box.get_y() - 0.02),
-    legend_box.get_width() + 0.04,
-    legend_box.get_height() + 0.04,
+    (legend_box.get_x()-0.02, legend_box.get_y()-0.02),
+    legend_box.get_width()+0.04,
+    legend_box.get_height()+0.04,
     boxstyle='round,pad=0.3,rounding_size=0.2',
     linewidth=0,
-    color='gray',
-    alpha=0.2,
-    zorder=0
+    color='gray', alpha=0.2, zorder=0
 )
 ax.add_patch(shadow_box)
 
-plt.subplots_adjust(bottom=0.3)
 st.pyplot(fig)
 
-# -------------------------------------------------------------------------
-# Show the Interpolated Depths Table
-# -------------------------------------------------------------------------
-st.subheader("Interpolated Depths Table (No Partial Extrapolation)")
-st.write("Depth (m) at which each % removal occurs, for each time in `times_reference` (then a final line extended if needed).")
-interp_disp = interpolated_depths.round(3)
-interp_disp.index.name = "Time (min)"
-st.dataframe(interp_disp)
+# Show Interpolated Depths Table
+st.subheader("Interpolated Depths Table")
+st.write("Depth (m) for each % removal, times_reference, final extension if needed.")
+st.dataframe(interpolated_depths.round(3))
 
 # -------------------------------------------------------------------------
-# Subplots for each % removal (same final extension)
+# Subplots
 # -------------------------------------------------------------------------
-st.subheader("Subplots of Each % Removal")
-
+st.subheader("Isoremoval Subplots")
 n_sub = len(percent_removal_reference)
-n_cols = 4
-n_rows = (n_sub + n_cols - 1) // n_cols
-
-fig_sub, axes = plt.subplots(nrows=n_rows, ncols=n_cols,
-                             figsize=(5*n_cols, 4*n_rows),
-                             constrained_layout=True)
+n_cols=4
+n_rows=(n_sub + n_cols -1)//n_cols
+fig_sub, axes = plt.subplots(n_rows,n_cols, figsize=(5*n_cols,4*n_rows), constrained_layout=True)
 axes = axes.flatten()
-cmap_sub = plt.get_cmap('tab20')
-
-for i, perc in enumerate(percent_removal_reference):
-    axx = axes[i]
-    d_serie = interpolated_depths[perc].values.astype(float)
-    t_serie = interpolated_depths.index.values.astype(float)
-    mask_ = ~np.isnan(d_serie)
-    tt = t_serie[mask_]
-    dd = d_serie[mask_]
-    if len(tt) < 2:
-        axx.set_title(f"{perc}% Removal (no data)")
+for i,(perc,col) in enumerate(zip(percent_removal_reference,colors_)):
+    axx=axes[i]
+    dd_ = interpolated_depths[perc].values.astype(float)
+    tt_ = interpolated_depths.index.values.astype(float)
+    mask_ = ~np.isnan(dd_)
+    tval=tt_[mask_]
+    dval=dd_[mask_]
+    if len(tval)<2:
+        axx.set_title(f"{perc}% (no data)")
         axx.invert_yaxis()
-        axx.grid(True, linestyle='--', linewidth=0.5)
+        axx.grid(True,linestyle='--',linewidth=0.5)
         continue
-
-    idx_srt = np.argsort(tt)
-    tt = tt[idx_srt]
-    dd = dd[idx_srt]
-
-    # final extension
-    tt_ext, dd_ext = extend_curve_to_bottom(tt, dd, plot_max_depth)
-
-    color_ = cmap_sub(i/len(percent_removal_reference))
-    axx.plot(tt_ext, dd_ext, marker='o', linewidth=1.5,
-             color=color_, markersize=3, label=f'{perc}%')
+    sidx=np.argsort(tval)
+    tval=tval[sidx]
+    dval=dval[sidx]
+    #ext
+    tval2,dval2=extend_curve_to_bottom(tval,dval,plot_max_depth)
+    axx.plot(tval2,dval2,marker='o',color=col,linewidth=1.5,markersize=3,label=f"{perc}%")
     axx.invert_yaxis()
-    axx.set_title(f'{perc}% Removal', fontsize=12, weight='bold')
-    axx.set_xlabel("Time (min)", fontsize=10, weight='bold')
-    axx.set_ylabel(f"Depth ({depth_units})", fontsize=10, weight='bold')
-    axx.grid(True, linestyle='--', linewidth=0.5)
+    axx.set_xlabel("Time(min)",fontsize=10,weight='bold')
+    axx.set_ylabel(f"Depth({depth_units})",fontsize=10,weight='bold')
+    axx.set_title(f"{perc}% Removal",fontsize=12,weight='bold')
+    axx.grid(True,linestyle='--',linewidth=0.5)
     axx.legend(fontsize=8)
 
-for j in range(i+1, len(axes)):
+for j in range(i+1,len(axes)):
     axes[j].axis('off')
 
-fig_sub.suptitle("Isoremoval Curves - Subplots", fontsize=16, weight='bold')
+fig_sub.suptitle("Isoremoval Curves - Subplots",fontsize=16,weight='bold')
 st.pyplot(fig_sub)
 
 # -------------------------------------------------------------------------
-# Suspended Solids Removal vs. Detention Time & Overflow Rate
+# 4. "Second Interpolation" for Overall_Removal_%
 # -------------------------------------------------------------------------
 st.header("Suspended Solids Removal vs. Detention Time & Overflow Rate")
 
 st.markdown("""
-This section finds the **time** when each isoremoval curve meets the bottom (the specified max depth). 
-Then, it approximates total removal at that time by a vertical integration of all isoremoval curves, 
-and finally computes the corresponding **overflow rate** (m/d).
-
-We then plot:
-1. **Removal % vs. Detention Time (hours)**  
-2. **Removal % vs. Overflow Rate (m/d)**
+Now we do a second interpolation for every other curve at the exact time 
+a given curve intersects the bottom, ensuring we can compute Overall_Removal_% 
+via a vertical line from 0..max_depth.
 """)
 
-def find_time_for_max_depth(perc):
+def find_time_bottom(perc):
     """
-    We'll just do a direct time-vs-depth interpolation from the final
-    (already extended) curve, then solve for depth=plot_max_depth.
+    We do time-vs-depth interpolation from the (already extended) curve, 
+    then solve for depth=plot_max_depth.
     """
     depth_series = interpolated_depths[perc].dropna()
     if depth_series.empty:
         return None
-    dvals = depth_series.values.astype(float)
-    tvals = depth_series.index.values.astype(float)
-
-    # sort by depth
-    idx_ = np.argsort(dvals)
-    d_sort = dvals[idx_]
-    t_sort = tvals[idx_]
-
-    # If the bottom is outside the min..max range, do a linear extrap
-    if plot_max_depth < d_sort[0]:
-        # from the first two points
-        if len(d_sort) < 2:
-            return None
-        d1, d2 = d_sort[0], d_sort[1]
-        t1, t2 = t_sort[0], t_sort[1]
-        if d2 == d1:
-            return None
-        slope = (t2 - t1)/(d2 - d1)
+    dvals=depth_series.values
+    tvals=depth_series.index.values.astype(float)
+    idx_=np.argsort(dvals)
+    d_s = dvals[idx_]
+    t_s = tvals[idx_]
+    if plot_max_depth<d_s[0]:
+        if len(d_s)<2: return None
+        d1,d2 = d_s[0], d_s[1]
+        t1,t2 = t_s[0], t_s[1]
+        if abs(d2-d1)<1e-12: return None
+        slope=(t2-t1)/(d2-d1)
         cand_t = t1 + slope*(plot_max_depth - d1)
-        if cand_t < 0:
-            return None
-        return cand_t
-
-    if plot_max_depth > d_sort[-1]:
-        if len(d_sort) < 2:
-            return None
-        d1, d2 = d_sort[-2], d_sort[-1]
-        t1, t2 = t_sort[-2], t_sort[-1]
-        if d2 == d1:
-            return None
-        slope = (t2 - t1)/(d2 - d1)
-        cand_t = t2 + slope*(plot_max_depth - d2)
-        if cand_t < 0:
-            return None
-        return cand_t
-
-    # normal in-range
-    ixx = np.searchsorted(d_sort, plot_max_depth)
-    if ixx == 0:
-        return float(t_sort[0])
-    if ixx >= len(d_sort):
-        return float(t_sort[-1])
-    d_lo, d_hi = d_sort[ixx-1], d_sort[ixx]
-    t_lo, t_hi = t_sort[ixx-1], t_sort[ixx]
-    if d_hi == d_lo:
+        return cand_t if cand_t>=0 else None
+    if plot_max_depth>d_s[-1]:
+        if len(d_s)<2: return None
+        d1,d2=d_s[-2], d_s[-1]
+        t1,t2=t_s[-2],t_s[-1]
+        if abs(d2-d1)<1e-12: return None
+        slope=(t2-t1)/(d2-d1)
+        cand_t=t2+slope*(plot_max_depth-d2)
+        return cand_t if cand_t>=0 else None
+    ixx=np.searchsorted(d_s,plot_max_depth)
+    if ixx==0: return float(t_s[0])
+    if ixx>=len(d_s):return float(t_s[-1])
+    d_lo,d_hi=d_s[ixx-1],d_s[ixx]
+    t_lo,t_hi=t_s[ixx-1],t_s[ixx]
+    if abs(d_hi-d_lo)<1e-12:
         return float(t_lo)
-    slope = (t_hi - t_lo)/(d_hi - d_lo)
-    cand_t = t_lo + slope*(plot_max_depth - d_lo)
-    if cand_t < 0:
-        return None
-    return float(cand_t)
+    slope=(t_hi-t_lo)/(d_hi-d_lo)
+    cand_t=t_lo+slope*(plot_max_depth-d_lo)
+    return cand_t if cand_t>=0 else None
 
-def compute_vertical_removal_fraction(t_vertical):
-    if t_vertical not in interpolated_depths.index:
+def depth_of_curve_at_time(perc, tval):
+    """
+    "Second interpolation": We gather removal vs. depth at time tval by scanning
+    all depths, then invert. We'll do the same logic as building a row in 'interpolated_depths'
+    but on the fly.
+    """
+    # Evaluate removal at each depth from 'removal_df'
+    r_, d_ = [], []
+    for dd in removal_df.index:
+        # time->removal
+        rr = interp_time_removal[dd](tval)
+        r_.append(rr)
+        d_.append(dd)
+    r_ = np.array(r_)
+    d_ = np.array(d_)
+
+    # filter 0..100
+    mask_ = (r_>=0)&(r_<=100)
+    r_ok = r_[mask_]
+    d_ok = d_[mask_]
+    if len(r_ok)<2:
         return np.nan
-    pairs = []
+    idx_s=np.argsort(r_ok)
+    r_s=r_ok[idx_s]
+    d_s=d_ok[idx_s]
+    if perc<r_s[0] or perc>r_s[-1]:
+        return np.nan
+    ixx=np.searchsorted(r_s,perc)
+    if ixx==0: return d_s[0]
+    if ixx>=len(r_s): return d_s[-1]
+    r_lo,r_hi=r_s[ixx-1], r_s[ixx]
+    dd_lo,dd_hi=d_s[ixx-1], d_s[ixx]
+    if abs(r_hi-r_lo)<1e-12:
+        return dd_lo
+    slope=(dd_hi-dd_lo)/(r_hi-r_lo)
+    cand_depth=dd_lo + slope*(perc-r_lo)
+    cand_depth=np.clip(cand_depth,0,plot_max_depth)
+    return cand_depth
+
+def compute_vertical_removal_fraction_on_the_fly(tval):
+    """
+    We'll gather each curve's depth at time tval using 'depth_of_curve_at_time',
+    then do the piecewise vertical integration from top to bottom.
+    We'll also optionally add top(=100%@depth=0) and bottom(=0%@depth=max_depth).
+    """
+    pairs=[]
+    # add top, bottom if you want
+    pairs.append((100.0, 0.0)) 
+    pairs.append((0.0, plot_max_depth))
+
     for R in percent_removal_reference:
-        d_ = interpolated_depths.loc[t_vertical, R]
-        if pd.isna(d_) or d_ < 0 or d_ > plot_max_depth:
+        dd_ = depth_of_curve_at_time(R, tval)
+        if np.isnan(dd_):
             continue
-        pairs.append((R, d_))
-    if len(pairs) < 2:
-        return np.nan
-    # sort by depth
-    pairs_sorted = sorted(pairs, key=lambda x: x[1])
-    total_depth = plot_max_depth
-    total_area = 0.0
-    prev_removal, prev_depth = pairs_sorted[0]
-    for i in range(1, len(pairs_sorted)):
-        curr_removal, curr_depth = pairs_sorted[i]
-        delta_depth = curr_depth - prev_depth
-        if delta_depth < 0:
-            continue
-        avg_removal = (prev_removal + curr_removal)/2.0
-        frac_of_col = delta_depth / total_depth
-        total_area += avg_removal * frac_of_col
-        prev_removal, prev_depth = curr_removal, curr_depth
-    return total_area
+        if dd_>=0 and dd_<=plot_max_depth:
+            pairs.append((R, dd_))
 
-results_list = []
+    # Now sort by depth ascending
+    pairs_sorted = sorted(pairs, key=lambda x: x[1])
+    totalH=plot_max_depth
+    if len(pairs_sorted)<2:
+        return np.nan
+    # Use the formula: R_total = R_a + sum( (h_i/H)*(R_b - R_a) )
+    R_total=0.0
+    prevR, prevD = pairs_sorted[0]
+    # We'll accumulate the "band" increments
+    for i in range(1,len(pairs_sorted)):
+        curR, curD = pairs_sorted[i]
+        h_i = curD - prevD
+        if h_i<0:
+            continue
+        # the "increment" is (h_i/H)*(curR - prevR)
+        R_total += (h_i/totalH)*(curR - prevR)
+        prevR, prevD = curR, curD
+
+    # final add the initial curve's R
+    R_total += pairs_sorted[0][0]
+
+    # clamp
+    R_total = np.clip(R_total, 0, 100)
+    return R_total
+
+results_list=[]
 for R in percent_removal_reference:
-    t_int = find_time_for_max_depth(R)
-    if t_int is None or t_int <= 1e-9:
+    # find time
+    t_int = find_time_bottom(R)
+    if t_int is None or t_int<=1e-9:
         continue
-    v_o = (plot_max_depth / t_int)*1440.0
-    R_tot = compute_vertical_removal_fraction(t_int)
+    # compute overflow rate
+    v_o = (plot_max_depth/t_int)*1440.0
+    # now do the second interpolation for overall removal
+    R_total = compute_vertical_removal_fraction_on_the_fly(t_int)
     t_h = t_int/60.0
     results_list.append({
         'Isoremoval_Curve_%': R,
         'Time_Intersect_Bottom_min': t_int,
         'Detention_Time_h': t_h,
         'Overflow_Rate_m_d': v_o,
-        'Overall_Removal_%': R_tot
+        'Overall_Removal_%': R_total
     })
 
-if len(results_list) == 0:
-    st.warning("""
-No isoremoval curves intersect the specified maximum depth (or code couldn't find a valid intersection).
-If your data or times_reference is sparse, or if removal hits 100% well above bottom, 
-you may need a different approach.
-""")
+if not results_list:
+    st.warning("No isoremoval curves intersect bottom or no valid data.")
 else:
-    results_df = pd.DataFrame(results_list).sort_values('Detention_Time_h')
-    st.subheader("Summary of Intersection Times & Computed Removals")
-    st.dataframe(results_df.round(2))
+    final_df = pd.DataFrame(results_list).sort_values('Detention_Time_h').reset_index(drop=True)
+    st.subheader("Summary of Intersection Times & Computed Removals (Second Interpolation)")
+    st.dataframe(final_df.round(2))
 
+    # Plots
     fig_rt, ax_rt = plt.subplots(figsize=(7,5))
-    ax_rt.plot(
-        results_df['Detention_Time_h'],
-        results_df['Overall_Removal_%'],
-        marker='o', linestyle='-',
-        color='blue'
-    )
+    ax_rt.plot(final_df['Detention_Time_h'], final_df['Overall_Removal_%'],
+               marker='o',linestyle='-',color='blue')
     ax_rt.set_xlabel("Detention Time (hours)", fontsize=12)
     ax_rt.set_ylabel("Overall Removal (%)", fontsize=12)
     ax_rt.set_title("Suspended Solids Removal vs. Detention Time", fontsize=14, weight='bold')
@@ -600,12 +547,8 @@ else:
     st.pyplot(fig_rt)
 
     fig_vo, ax_vo = plt.subplots(figsize=(7,5))
-    ax_vo.plot(
-        results_df['Overflow_Rate_m_d'],
-        results_df['Overall_Removal_%'],
-        marker='s', linestyle='--',
-        color='red'
-    )
+    ax_vo.plot(final_df['Overflow_Rate_m_d'], final_df['Overall_Removal_%'],
+               marker='s',linestyle='--',color='red')
     ax_vo.set_xlabel("Overflow Rate (m/d)", fontsize=12)
     ax_vo.set_ylabel("Overall Removal (%)", fontsize=12)
     ax_vo.set_title("Suspended Solids Removal vs. Overflow Rate", fontsize=14, weight='bold')
@@ -613,12 +556,10 @@ else:
     st.pyplot(fig_vo)
 
     st.markdown("""
-    **Note**: 
-    1. We preserve the original logic for the main interpolation, except we do **no** partial 
-       extrapolation if the requested removal% is outside the measured range (we just use NaN).  
-    2. We only add a final segment from the last point to the bottom if needed. 
-    3. The summary of intersection times does a simple time-vs-depth interpolation to find 
-       when each curve meets the bottom, with a piecewise trapezoid to estimate overall removal.
+    **Note**: We do a second interpolation (`depth_of_curve_at_time`) for each curve 
+    at the exact time the selected curve hits bottom, ensuring we can form a "vertical line" 
+    from top(100%) to bottom(0%) and integrate. 
+    That is why we now see Overall_Removal_% for all curves that truly intersect the bottom.
     """)
 
 st.success("Done! You can adjust inputs or upload different data as needed.")

@@ -11,22 +11,27 @@ from io import BytesIO
 # Set page config
 # -------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Isoremoval Curves - Minimum 3 Intersection Points",
+    page_title="Isoremoval Curves Generator",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("Isoremoval Curves Generator (Skip Curves with <3 Intersection Points)")
+# -------------------------------------------------------------------------
+# Title
+# -------------------------------------------------------------------------
+st.title("Isoremoval Curves Generator")
 
 st.markdown("""
-This code generates isoremoval curves and calculates Overall_Removal_% **only** if the vertical line 
-for that bottom‐intersecting curve yields at least **3** intersection points (including the top boundary). 
-This helps avoid 'spikes' when data is too sparse.
+This code generates isoremoval curves and calculates Overall_Removal_% **only** if 
+the vertical line for that bottom‐intersecting curve yields at least **5** intersection 
+points (including the top boundary). This helps avoid 'spikes' when data is too sparse.
 """)
 
 # -------------------------------------------------------------------------
 # Sidebar: Provide sample file & example
 # -------------------------------------------------------------------------
+st.sidebar.header("Upload Data File")
+
 def generate_sample_excel():
     data = {
         'Depth (m)': [0.5, 1.0, 1.5, 2.0, 2.5],
@@ -50,7 +55,23 @@ def get_sample_link():
     b64 = base64.b64encode(sample.read()).decode()
     return f'<a href="data:application/octet-stream;base64,{b64}" download="sample_isoremoval.xlsx">Download Sample Excel</a>'
 
-st.sidebar.header("Upload Data File")
+# Example table shown in the sidebar (RESTORED):
+st.sidebar.markdown("""
+**Expected Format (example):**
+
+| Depth (m) |  10 |  20 |  35 |  50 |  70 |  85 |
+|-----------|-----|-----|-----|-----|-----|-----|
+|  0.5      |14   |10   |7    |6.2  |5    |4    |
+|  1.0      |15   |13   |10.6 |8.2  |7    |6    |
+|  1.5      |15.4 |14.2 |12   |10   |7.8  |7    |
+|  2.0      |16   |14.6 |12.6 |11   |9    |8    |
+|  2.5      |17   |15   |13   |11.4 |10   |8.8  |
+
+*First column:* Depth (m)  
+*Column headers:* times (minutes)  
+*Cells:* measured concentration (mg/L)
+""")
+
 st.sidebar.markdown(get_sample_link(), unsafe_allow_html=True)
 
 uploaded_file = st.sidebar.file_uploader(
@@ -72,7 +93,7 @@ init_conc = st.sidebar.number_input(
 
 depth_units = st.sidebar.selectbox(
     "Depth Units",
-    ["Meters (m)","Feet (ft)","Centimeters (cm)","Inches (in)"],
+    ["Meters (m)", "Feet (ft)", "Centimeters (cm)", "Inches (in)"],
     index=0
 )
 
@@ -96,7 +117,7 @@ def load_data(file):
     elif ext in ["csv"]:
         return pd.read_csv(file)
     else:
-        st.error("Unsupported format.")
+        st.error("Unsupported file format.")
         return None
 
 if not uploaded_file:
@@ -167,6 +188,7 @@ percent_list = sorted(list(set(user_list)))
 times_ref = np.arange(0, max(times)+10, step=5)
 iso_depths = pd.DataFrame(index=times_ref, columns=percent_list)
 
+# Build time->removal function for each depth
 from scipy.interpolate import interp1d
 interp_time_removal={}
 for d_ in removal_df.index:
@@ -363,7 +385,7 @@ def find_time_for_bottom(p_):
     if plot_max>d_s[-1]:
         if len(d_s)<2:return None
         d1,d2=d_s[-2], d_s[-1]
-        t1,t2=t_s[-2], t_s[-1]
+        t1,t2=t_s[-2],t_s[-1]
         if abs(d2-d1)<1e-12:return None
         slope=(t2-t1)/(d2-d1)
         c_ = t2 + slope*(plot_max-d2)
@@ -391,7 +413,7 @@ def depth_of_curve_at_time(p_, tval):
         allr.append(rr)
         alld.append(d_)
     allr=np.array(allr)
-    alld=np.array(alld)
+    alld=np.array(allr.shape)
     mask_=(allr>=0)&(allr<=100)
     rr_ = allr[mask_]
     dd_ = alld[mask_]
@@ -402,7 +424,7 @@ def depth_of_curve_at_time(p_, tval):
     dd_s=dd_[idx_s]
     if p_<rr_s[0] or p_>rr_s[-1]:
         return np.nan
-    ixx=np.searchsorted(rr_s,p_)
+    ixx=np.searchsorted(rr_s, p_)
     if ixx==0:
         return dd_s[0]
     elif ixx>=len(rr_s):
@@ -421,7 +443,7 @@ def compute_overall_removal_top_only(tval):
     plus top=100% at depth=0, 
     then do a piecewise integration from shallow->deep.
 
-    We skip if the total # of intersection points < 3.
+    We skip if the total # of intersection points < 5.
     """
     pairs=[]
     # top boundary
@@ -433,8 +455,8 @@ def compute_overall_removal_top_only(tval):
         if not np.isnan(d_) and 0<=d_<=plot_max:
             pairs.append((p_, d_))
 
-    # If < 3 points, skip
-    if len(pairs)<3:
+    # If < 5 points, skip
+    if len(pairs)<5:
         return np.nan
 
     # sort by depth
@@ -462,7 +484,7 @@ for p_ in percent_list:
     # compute overall removal
     R_tot = compute_overall_removal_top_only(t_bot)
     if np.isnan(R_tot):
-        # skip if <3 intersection points
+        # skip if <5 intersection points
         continue
     t_hrs = t_bot/60.0
     results.append({
@@ -474,13 +496,14 @@ for p_ in percent_list:
     })
 
 if not results:
-    st.warning("No curves meet the bottom with >= 3 intersection points or no valid data.")
+    st.warning("No curves meet the bottom with >= 5 intersection points or no valid data.")
 else:
     final_df = pd.DataFrame(results).sort_values("Detention_Time_h")
-    st.subheader("Summary of Intersection Times & Computed Removals (>=3 intersection points)")
+    # Updated table title
+    st.subheader("Summary of Intersection Times & Computed Removals")
     st.dataframe(final_df)
 
-    # Plot vs detention
+    # Plot vs. detention
     fig_dt, ax_dt = plt.subplots(figsize=(7,5))
     ax_dt.plot(final_df['Detention_Time_h'], final_df['Overall_Removal_%'],
                marker='o', color='blue')
@@ -490,7 +513,7 @@ else:
     ax_dt.grid(True)
     st.pyplot(fig_dt)
 
-    # Plot vs overflow rate
+    # Plot vs. overflow rate
     fig_vo, ax_vo = plt.subplots(figsize=(7,5))
     ax_vo.plot(final_df['Overflow_Rate_m_d'], final_df['Overall_Removal_%'],
                marker='s', linestyle='--', color='red')
@@ -500,4 +523,4 @@ else:
     ax_vo.grid(True)
     st.pyplot(fig_vo)
 
-st.success("Done! We skip Overall_Removal_% if fewer than 3 intersection points are found.")
+st.success("Done! We skip Overall_Removal_% if fewer than 5 intersection points are found.")

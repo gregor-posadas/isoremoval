@@ -8,25 +8,20 @@ import base64
 from io import BytesIO
 
 # -------------------------------------------------------------------------
-# Set Streamlit page config
+# Set page config
 # -------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Isoremoval Curves (100% top boundary only)",
+    page_title="Isoremoval Curves - Minimum 3 Intersection Points",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# -------------------------------------------------------------------------
-# Title and Intro
-# -------------------------------------------------------------------------
-st.title("Isoremoval Curves Generator (with 100% Top Boundary, No 0% at Bottom)")
+st.title("Isoremoval Curves Generator (Skip Curves with <3 Intersection Points)")
 
 st.markdown("""
-1. Reads a table of depths × times → concentrations (mg/L).  
-2. Computes isoremoval curves for selected removal percentages.  
-3. For **Overall Removal** at the time a curve intersects the bottom, we do a **second interpolation** 
-   of **all** curves at that exact time, from the bottom curve to a 100% boundary at the top (depth=0).  
-4. We do **not** add an artificial 0% boundary at the bottom.  
+This code generates isoremoval curves and calculates Overall_Removal_% **only** if the vertical line 
+for that bottom‐intersecting curve yields at least **3** intersection points (including the top boundary). 
+This helps avoid 'spikes' when data is too sparse.
 """)
 
 # -------------------------------------------------------------------------
@@ -86,7 +81,7 @@ max_depth_val = st.sidebar.number_input(
     min_value=0.0,
     value=0.0,
     step=0.1,
-    help="0 => use maximum depth in data"
+    help="0 => use maximum depth from data"
 )
 
 # -------------------------------------------------------------------------
@@ -133,7 +128,7 @@ if depths is None or times is None or concentrations is None:
     st.stop()
 
 if concentrations.shape!=(len(depths), len(times)):
-    st.error("Shape mismatch in data.")
+    st.error("Data shape mismatch.")
     st.stop()
 
 if max_depth_val>0:
@@ -143,9 +138,6 @@ if max_depth_val>0:
 else:
     plot_max = np.max(depths)
 
-# -------------------------------------------------------------------------
-# Show user data
-# -------------------------------------------------------------------------
 st.subheader("Your Uploaded Data (Concentrations)")
 st.dataframe(df.style.format(precision=2))
 
@@ -175,59 +167,61 @@ percent_list = sorted(list(set(user_list)))
 times_ref = np.arange(0, max(times)+10, step=5)
 iso_depths = pd.DataFrame(index=times_ref, columns=percent_list)
 
-# time->removal for each depth
+from scipy.interpolate import interp1d
 interp_time_removal={}
 for d_ in removal_df.index:
     t_ = removal_df.columns.values.astype(float)
     r_ = removal_df.loc[d_].values.astype(float)
     interp_time_removal[d_] = interp1d(t_, r_, kind='linear', fill_value="extrapolate")
 
-# invert removal->depth for each time
-for perc in percent_list:
-    d_list=[]
-    for tval in times_ref:
-        if tval==0:
-            d_list.append(0.0)
+def invert_removal_depth(perc, tval):
+    """
+    Given a time tval, we compute removal at each depth, then invert for `perc`.
+    Returns the depth where removal=perc, or NaN if out of range.
+    """
+    all_r=[]
+    all_d=[]
+    for d_ in removal_df.index:
+        rr = interp_time_removal[d_](tval)
+        all_r.append(rr)
+        all_d.append(d_)
+    all_r=np.array(all_r)
+    all_d=np.array(all_d)
+    mask_=(all_r>=0)&(all_r<=100)
+    r_ok=all_r[mask_]
+    d_ok=all_d[mask_]
+    if len(r_ok)<2:
+        return np.nan
+    idx_s=np.argsort(r_ok)
+    r_s=r_ok[idx_s]
+    d_s=d_ok[idx_s]
+    if perc<r_s[0] or perc>r_s[-1]:
+        return np.nan
+    ixx=np.searchsorted(r_s, perc)
+    if ixx==0:
+        return d_s[0]
+    elif ixx>=len(r_s):
+        return d_s[-1]
+    r_lo,r_hi=r_s[ixx-1], r_s[ixx]
+    dd_lo, dd_hi=d_s[ixx-1], d_s[ixx]
+    if abs(r_hi-r_lo)<1e-12:
+        return dd_lo
+    slope=(dd_hi-dd_lo)/(r_hi-r_lo)
+    cand = dd_lo + slope*(perc-r_lo)
+    return np.clip(cand, 0, plot_max)
+
+for p_ in percent_list:
+    depth_list=[]
+    for t_ in times_ref:
+        if t_==0.0:
+            # define depth=0 at time=0
+            depth_list.append(0.0)
             continue
-        # Evaluate removal at all depths
-        rtemp=[]
-        dtemp=[]
-        for dd_ in removal_df.index:
-            rr = interp_time_removal[dd_](tval)
-            rtemp.append(rr)
-            dtemp.append(dd_)
-        rtemp=np.array(rtemp)
-        dtemp=np.array(dtemp)
-        mask_=(rtemp>=0)&(rtemp<=100)
-        rr_ = rtemp[mask_]
-        dd_ = dtemp[mask_]
-        if len(rr_)<2:
-            d_list.append(np.nan)
-            continue
-        idx_s = np.argsort(rr_)
-        rr_s=rr_[idx_s]
-        dd_s=dd_[idx_s]
-        if perc<rr_s[0] or perc>rr_s[-1]:
-            d_list.append(np.nan)
-            continue
-        ixx = np.searchsorted(rr_s,perc)
-        if ixx==0:
-            d_list.append(dd_s[0])
-        elif ixx>=len(rr_s):
-            d_list.append(dd_s[-1])
-        else:
-            r_lo,r_hi=rr_s[ixx-1], rr_s[ixx]
-            dep_lo,dep_hi=dd_s[ixx-1], dd_s[ixx]
-            if abs(r_hi-r_lo)<1e-12:
-                d_list.append(dep_lo)
-            else:
-                slope=(dep_hi-dep_lo)/(r_hi-r_lo)
-                d_cand=dep_lo + slope*(perc-r_lo)
-                d_cand=np.clip(d_cand,0,plot_max)
-                d_list.append(d_cand)
-    arr_ = np.array(d_list)
+        dd_=invert_removal_depth(p_, t_)
+        depth_list.append(dd_)
+    arr_ = np.array(depth_list)
     arr_ = np.clip(arr_,0,plot_max)
-    iso_depths[perc] = arr_
+    iso_depths[p_]=arr_
 
 def extend_final_segment(tvals,dvals,bottom):
     if len(tvals)<2:
@@ -254,34 +248,35 @@ st.subheader("Generated Isoremoval Curves")
 fig, ax = plt.subplots(figsize=(14,10))
 cmap_ = plt.get_cmap('tab20')
 colors_=cmap_(np.linspace(0,1,len(percent_list)))
-for perc,col in zip(percent_list,colors_):
-    dcol = iso_depths[perc].values.astype(float)
-    tcol = iso_depths.index.values.astype(float)
-    mask__=~np.isnan(dcol)
-    tt_=tcol[mask__]
-    dd_=dcol[mask__]
-    if len(tt_)<2:
+
+for p_, col_ in zip(percent_list, colors_):
+    d_ser=iso_depths[p_].values.astype(float)
+    t_ser=iso_depths.index.values.astype(float)
+    mask__=~np.isnan(d_ser)
+    t_ok=t_ser[mask__]
+    d_ok=d_ser[mask__]
+    if len(t_ok)<2:
         continue
-    sidx=np.argsort(tt_)
-    tt_=tt_[sidx]
-    dd_=dd_[sidx]
-    # extend
-    tt_e,dd_e = extend_final_segment(tt_,dd_, plot_max)
-    ax.plot(tt_e,dd_e,color=col,label=f"{perc}%")
+    sidx=np.argsort(t_ok)
+    t_ok=t_ok[sidx]
+    d_ok=d_ok[sidx]
+    t_ext, d_ext=extend_final_segment(t_ok,d_ok,plot_max)
+    ax.plot(t_ext, d_ext, color=col_, label=f"{p_}%")
 
 ax.set_xlabel("Time(min)",fontsize=14,weight='bold')
 ax.set_ylabel(f"Depth({depth_units})",fontsize=14,weight='bold')
 ax.set_title("Isoremoval Curves",fontsize=16,weight='bold')
 ax.set_ylim(plot_max,0)
-ax.grid(True,linestyle='--',linewidth=0.5)
+ax.grid(True, linestyle='--', linewidth=0.5)
 plt.subplots_adjust(bottom=0.25)
-handles,labels = ax.get_legend_handles_labels()
+handles,labels=ax.get_legend_handles_labels()
 legend=ax.legend(
     handles,labels,
     title="Percent Removal",
     loc='upper center',
     bbox_to_anchor=(0.5,-0.25),
-    ncol=6,fontsize=8, title_fontsize=10,frameon=True
+    ncol=6,fontsize=8, title_fontsize=10,
+    frameon=True
 )
 legend.get_title().set_weight('bold')
 legend.get_frame().set_facecolor('#f9f9f9')
@@ -290,13 +285,13 @@ legend.get_frame().set_linewidth(1.5)
 legend.get_frame().set_boxstyle('round,pad=0.3,rounding_size=0.2')
 legend.get_frame().set_alpha(0.9)
 legend_box = legend.get_frame()
-shadow_box=FancyBboxPatch(
-    (legend_box.get_x()-0.02,legend_box.get_y()-0.02),
+shadow_box = FancyBboxPatch(
+    (legend_box.get_x()-0.02, legend_box.get_y()-0.02),
     legend_box.get_width()+0.04,
     legend_box.get_height()+0.04,
     boxstyle='round,pad=0.3,rounding_size=0.2',
     linewidth=0,
-    color='gray', alpha=0.2,zorder=0
+    color='gray', alpha=0.2, zorder=0
 )
 ax.add_patch(shadow_box)
 st.pyplot(fig)
@@ -308,69 +303,72 @@ st.subheader("Isoremoval Subplots")
 n_sub=len(percent_list)
 n_cols=4
 n_rows=(n_sub+n_cols-1)//n_cols
-fig_sub, axes_sub = plt.subplots(n_rows,n_cols, figsize=(5*n_cols,4*n_rows), constrained_layout=True)
+fig_sub, axes_sub=plt.subplots(n_rows,n_cols, figsize=(5*n_cols,4*n_rows), constrained_layout=True)
 axes_sub=axes_sub.flatten()
-for i,(p_,co_) in enumerate(zip(percent_list, colors_)):
+for i,(pp,cc) in enumerate(zip(percent_list, colors_)):
     axx=axes_sub[i]
-    dv_=iso_depths[p_].values.astype(float)
-    tv_=iso_depths.index.values.astype(float)
-    ms_=~np.isnan(dv_)
-    tv2=tv_[ms_]
-    dv2=dv_[ms_]
-    if len(tv2)<2:
-        axx.set_title(f"{p_}% (no data)")
+    dd_ = iso_depths[pp].values.astype(float)
+    tt_ = iso_depths.index.values.astype(float)
+    mask_ = ~np.isnan(dd_)
+    tv_ = tt_[mask_]
+    dv_ = dd_[mask_]
+    if len(tv_)<2:
+        axx.set_title(f"{pp}% (no data)")
         axx.invert_yaxis()
-        axx.grid(True,linestyle='--',linewidth=0.5)
+        axx.grid(True, linestyle='--',linewidth=0.5)
         continue
-    sidx_=np.argsort(tv2)
-    tv2=tv2[sidx_]
-    dv2=dv2[sidx_]
-    tv_ex,dv_ex = extend_final_segment(tv2,dv2,plot_max)
-    axx.plot(tv_ex,dv_ex, marker='o',color=co_,linewidth=1.5,markersize=3,label=f"{p_}%")
+    sidx_=np.argsort(tv_)
+    tv_=tv_[sidx_]
+    dv_=dv_[sidx_]
+    tv_ex, dv_ex = extend_final_segment(tv_, dv_, plot_max)
+    axx.plot(tv_ex, dv_ex, marker='o', color=cc, linewidth=1.5, markersize=3, label=f"{pp}%")
     axx.invert_yaxis()
-    axx.set_title(f"{p_}% Removal",fontsize=12,weight='bold')
+    axx.set_title(f"{pp}% Removal",fontsize=12,weight='bold')
     axx.set_xlabel("Time(min)",fontsize=10,weight='bold')
     axx.set_ylabel(f"Depth({depth_units})",fontsize=10,weight='bold')
-    axx.grid(True,linestyle='--',linewidth=0.5)
+    axx.grid(True, linestyle='--',linewidth=0.5)
     axx.legend(fontsize=8)
 
 for j in range(i+1,len(axes_sub)):
     axes_sub[j].axis('off')
-fig_sub.suptitle("Isoremoval Curves - Subplots",fontsize=16,weight='bold')
+fig_sub.suptitle("Isoremoval Curves - Subplots", fontsize=16, weight='bold')
 st.pyplot(fig_sub)
 
 # -------------------------------------------------------------------------
-# Second interpolation for Overall Removal
-# with a 100% top boundary, NO 0% at bottom
+# Overall Removal vs. Detention Time / Overflow Rate
 # -------------------------------------------------------------------------
-st.header("Suspended Solids Removal vs. Detention Time & Overflow Rate (100% top boundary only)")
+st.header("Suspended Solids Removal vs. Detention Time & Overflow Rate")
 
-# 1. Find intersection time with bottom
-def find_time_bottom(perc):
-    srs=iso_depths[perc].dropna()
+def find_time_for_bottom(p_):
+    """
+    Interpolate time vs. depth from iso_depths => solve for depth=plot_max.
+    """
+    srs=iso_depths[p_].dropna()
     if srs.empty:return None
     dvals=srs.values
     tvals=srs.index.values.astype(float)
     idx_=np.argsort(dvals)
     d_s=dvals[idx_]
     t_s=tvals[idx_]
-    # handle if bottom outside range
+
     if plot_max<d_s[0]:
         if len(d_s)<2:return None
-        d1,d2 = d_s[0], d_s[1]
-        t1,t2 = t_s[0], t_s[1]
+        d1,d2=d_s[0], d_s[1]
+        t1,t2=t_s[0], t_s[1]
         if abs(d2-d1)<1e-12:return None
         slope=(t2-t1)/(d2-d1)
-        cand=t1 + slope*(plot_max-d1)
-        return cand if cand>=0 else None
+        c_ = t1 + slope*(plot_max-d1)
+        return c_ if c_>=0 else None
+
     if plot_max>d_s[-1]:
         if len(d_s)<2:return None
         d1,d2=d_s[-2], d_s[-1]
-        t1,t2=t_s[-2],t_s[-1]
+        t1,t2=t_s[-2], t_s[-1]
         if abs(d2-d1)<1e-12:return None
         slope=(t2-t1)/(d2-d1)
-        cand=t2+slope*(plot_max-d2)
-        return cand if cand>=0 else None
+        c_ = t2 + slope*(plot_max-d2)
+        return c_ if c_>=0 else None
+
     ixx=np.searchsorted(d_s,plot_max)
     if ixx==0:return float(t_s[0])
     if ixx>=len(d_s):return float(t_s[-1])
@@ -381,120 +379,125 @@ def find_time_bottom(perc):
     slope=(th-tl)/(dh-dl)
     return tl + slope*(plot_max-dl)
 
-# 2. On-the-fly function: depth_of_curve_at_time
-def depth_of_curve_at_time(perc, tval):
+def depth_of_curve_at_time(p_, tval):
     """
-    Evaluate for each depth d in removal_df,
-    time->removal. Then invert to find depth s.t. removal=perc.
+    'Second interpolation': gather removal vs. depth from removal_df 
+    at time tval, invert for p_.
     """
-    rlist=[]
-    dlist=[]
+    allr=[]
+    alld=[]
     for d_ in removal_df.index:
-        r_ = interp_time_removal[d_](tval)
-        rlist.append(r_)
-        dlist.append(d_)
-    rlist=np.array(rlist)
-    dlist=np.array(dlist)
-    mask_=(rlist>=0)&(rlist<=100)
-    rr=rlist[mask_]
-    dd=dlist[mask_]
-    if len(rr)<2:
+        rr = interp_time_removal[d_](tval)
+        allr.append(rr)
+        alld.append(d_)
+    allr=np.array(allr)
+    alld=np.array(alld)
+    mask_=(allr>=0)&(allr<=100)
+    rr_ = allr[mask_]
+    dd_ = alld[mask_]
+    if len(rr_)<2:
         return np.nan
-    idx_s=np.argsort(rr)
-    rr_s=rr[idx_s]
-    dd_s=dd[idx_s]
-    if perc<rr_s[0] or perc>rr_s[-1]:
+    idx_s=np.argsort(rr_)
+    rr_s=rr_[idx_s]
+    dd_s=dd_[idx_s]
+    if p_<rr_s[0] or p_>rr_s[-1]:
         return np.nan
-    ixx=np.searchsorted(rr_s,perc)
-    if ixx==0:return dd_s[0]
-    if ixx>=len(rr_s):return dd_s[-1]
+    ixx=np.searchsorted(rr_s,p_)
+    if ixx==0:
+        return dd_s[0]
+    elif ixx>=len(rr_s):
+        return dd_s[-1]
     r_lo,r_hi=rr_s[ixx-1], rr_s[ixx]
-    d_lo,d_hi=dd_s[ixx-1], dd_s[ixx]
+    dd_lo,dd_hi=dd_s[ixx-1], dd_s[ixx]
     if abs(r_hi-r_lo)<1e-12:
-        return d_lo
-    slope=(d_hi-d_lo)/(r_hi-r_lo)
-    cand_depth=d_lo + slope*(perc-r_lo)
-    cand_depth=np.clip(cand_depth,0,plot_max)
-    return cand_depth
+        return dd_lo
+    slope=(dd_hi-dd_lo)/(r_hi-r_lo)
+    cand=dd_lo + slope*(p_-r_lo)
+    return np.clip(cand,0,plot_max)
 
-# 3. vertical integration
 def compute_overall_removal_top_only(tval):
     """
-    We gather each real isoremoval curve at time tval, plus top=100% at depth=0,
-    then do a piecewise integration from shallow to deep.
-    No 0% boundary at bottom.
+    We gather each real curve's depth at tval, 
+    plus top=100% at depth=0, 
+    then do a piecewise integration from shallow->deep.
+
+    We skip if the total # of intersection points < 3.
     """
     pairs=[]
-    # add 100% top boundary
+    # top boundary
     pairs.append((100.0, 0.0))
 
-    # gather real curves
+    # actual curves
     for p_ in percent_list:
-        dd_ = depth_of_curve_at_time(p_, tval)
-        if not np.isnan(dd_) and 0<=dd_<=plot_max:
-            pairs.append((p_, dd_))
+        d_ = depth_of_curve_at_time(p_, tval)
+        if not np.isnan(d_) and 0<=d_<=plot_max:
+            pairs.append((p_, d_))
 
-    # if <2, can't integrate
-    if len(pairs)<2:
+    # If < 3 points, skip
+    if len(pairs)<3:
         return np.nan
-    # sort by depth ascending
-    pairs_sorted=sorted(pairs, key=lambda x: x[1])
+
+    # sort by depth
+    pairs_s=sorted(pairs, key=lambda x:x[1])
     H=plot_max
     R_total=0.0
-    prevR, prevD = pairs_sorted[0]
-    for i in range(1,len(pairs_sorted)):
-        curR, curD = pairs_sorted[i]
-        deltaD=curD-prevD
+    prevR, prevD = pairs_s[0]
+    for i in range(1, len(pairs_s)):
+        curR, curD = pairs_s[i]
+        deltaD = curD - prevD
         if deltaD<0:
             continue
-        # piece
-        R_total += (deltaD/H)*(curR-prevR)
+        R_total += (deltaD/H)*(curR - prevR)
         prevR, prevD = curR, curD
-    # add the initial removal from top boundary
-    R_total += pairs_sorted[0][0]
+    R_total += pairs_s[0][0]  # add initial boundary's removal
     return np.clip(R_total,0,100)
 
 results=[]
 for p_ in percent_list:
-    t_bott = find_time_bottom(p_)
-    if t_bott is None or t_bott<1e-12:
+    t_bot = find_time_for_bottom(p_)
+    if t_bot is None or t_bot<1e-12:
         continue
-    # Overflow
-    v_o = (plot_max/t_bott)*1440.0
-    # overall removal
-    R_tot = compute_overall_removal_top_only(t_bott)
-    t_h = t_bott/60.0
+    # compute overflow
+    vo = (plot_max/t_bot)*1440.0
+    # compute overall removal
+    R_tot = compute_overall_removal_top_only(t_bot)
+    if np.isnan(R_tot):
+        # skip if <3 intersection points
+        continue
+    t_hrs = t_bot/60.0
     results.append({
         "Isoremoval_Curve_%": p_,
-        "Time_Intersect_Bottom_min": round(t_bott,2),
-        "Detention_Time_h": round(t_h,2),
-        "Overflow_Rate_m_d": round(v_o,2),
+        "Time_Intersect_Bottom_min": round(t_bot,2),
+        "Detention_Time_h": round(t_hrs,2),
+        "Overflow_Rate_m_d": round(vo,2),
         "Overall_Removal_%": round(R_tot,2)
     })
 
 if not results:
-    st.warning("No curves intersect bottom or no valid data.")
+    st.warning("No curves meet the bottom with >= 3 intersection points or no valid data.")
 else:
     final_df = pd.DataFrame(results).sort_values("Detention_Time_h")
-    st.subheader("Summary of Intersection Times & Computed Removals (100% top boundary only)")
+    st.subheader("Summary of Intersection Times & Computed Removals (>=3 intersection points)")
     st.dataframe(final_df)
 
+    # Plot vs detention
     fig_dt, ax_dt = plt.subplots(figsize=(7,5))
     ax_dt.plot(final_df['Detention_Time_h'], final_df['Overall_Removal_%'],
-               marker='o', color='blue', linewidth=1.5)
+               marker='o', color='blue')
     ax_dt.set_xlabel("Detention Time (hours)", fontsize=12)
     ax_dt.set_ylabel("Overall Removal (%)", fontsize=12)
     ax_dt.set_title("Suspended Solids Removal vs. Detention Time", fontsize=14, weight='bold')
     ax_dt.grid(True)
     st.pyplot(fig_dt)
 
+    # Plot vs overflow rate
     fig_vo, ax_vo = plt.subplots(figsize=(7,5))
     ax_vo.plot(final_df['Overflow_Rate_m_d'], final_df['Overall_Removal_%'],
-               marker='s', linestyle='--', color='red', linewidth=1.5)
+               marker='s', linestyle='--', color='red')
     ax_vo.set_xlabel("Overflow Rate (m/d)", fontsize=12)
     ax_vo.set_ylabel("Overall Removal (%)", fontsize=12)
     ax_vo.set_title("Suspended Solids Removal vs. Overflow Rate", fontsize=14, weight='bold')
     ax_vo.grid(True)
     st.pyplot(fig_vo)
 
-st.success("Done! We keep 100% at top=0m only, no 0% at bottom.")
+st.success("Done! We skip Overall_Removal_% if fewer than 3 intersection points are found.")

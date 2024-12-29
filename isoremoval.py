@@ -23,7 +23,7 @@ st.title("Isoremoval Curves Generator")
 
 st.markdown("""
 This code generates isoremoval curves and calculates Overall_Removal_% **only** if 
-the vertical line for that bottom‐intersecting curve yields at least **5** intersection 
+the vertical line for that bottom‐intersecting curve yields at least **3** intersection 
 points (including the top boundary). This helps avoid 'spikes' when data is too sparse.
 """)
 
@@ -207,7 +207,7 @@ def invert_removal_depth(perc, tval):
         all_d.append(d_)
 
     all_r = np.array(all_r)
-    all_d = np.array(all_d)  # <-- FIX: ensure this is the array of depths, NOT .shape
+    all_d = np.array(all_d)  # ensure we have array of depths, not .shape
 
     mask_ = (all_r >= 0) & (all_r <= 100)
     r_ok = all_r[mask_]
@@ -236,7 +236,6 @@ def invert_removal_depth(perc, tval):
     slope = (dd_hi - dd_lo) / (r_hi - r_lo)
     cand = dd_lo + slope * (perc - r_lo)
     return np.clip(cand, 0, plot_max)
-
 
 for p_ in percent_list:
     depth_list = []
@@ -442,7 +441,7 @@ def depth_of_curve_at_time(p_, tval):
         alld.append(d_)
 
     allr = np.array(allr)
-    alld = np.array(alld)  # <--- ensure we have an array of depths
+    alld = np.array(alld)  # <--- ensure we have array of depths
 
     mask_ = (allr >= 0) & (allr <= 100)
     rr_ = allr[mask_]
@@ -477,7 +476,7 @@ def compute_overall_removal_top_only(tval):
     We gather each real curve's depth at tval, plus top=100% at depth=0,
     then do a piecewise integration from shallow->deep.
 
-    We skip if the total # of intersection points < 5.
+    We skip if the total # of intersection points < 3.
     """
     pairs = []
     # top boundary
@@ -489,8 +488,8 @@ def compute_overall_removal_top_only(tval):
         if not np.isnan(d_) and 0 <= d_ <= plot_max:
             pairs.append((p_, d_))
 
-    # If < 5 points, skip
-    if len(pairs) < 5:
+    # If < 3 points, skip
+    if len(pairs) < 3:
         return np.nan
 
     # sort by depth ascending
@@ -523,7 +522,7 @@ for p_ in percent_list:
     # Compute overall removal
     R_tot = compute_overall_removal_top_only(t_bot)
     if np.isnan(R_tot):
-        # skip if <5 intersection points
+        # skip if <3 intersection points
         continue
 
     t_hrs = t_bot / 60.0
@@ -536,14 +535,14 @@ for p_ in percent_list:
     })
 
 if not results:
-    st.warning("No curves meet the bottom with >= 5 intersection points or no valid data.")
+    st.warning("No curves meet the bottom with >= 3 intersection points or no valid data.")
 else:
     final_df = pd.DataFrame(results).sort_values("Detention_Time_h")
     st.subheader("Summary of Intersection Times & Computed Removals")
     st.dataframe(final_df)
 
     # Plot vs. detention
-    fig_dt, ax_dt = plt.subplots(figsize=(7,5))
+    fig_dt, ax_dt = plt.subplots(figsize=(7, 5))
     ax_dt.plot(final_df['Detention_Time_h'], final_df['Overall_Removal_%'],
                marker='o', color='blue')
     ax_dt.set_xlabel("Detention Time (hours)", fontsize=12)
@@ -553,7 +552,7 @@ else:
     st.pyplot(fig_dt)
 
     # Plot vs. overflow rate
-    fig_vo, ax_vo = plt.subplots(figsize=(7,5))
+    fig_vo, ax_vo = plt.subplots(figsize=(7, 5))
     ax_vo.plot(final_df['Overflow_Rate_m_d'], final_df['Overall_Removal_%'],
                marker='s', linestyle='--', color='red')
     ax_vo.set_xlabel("Overflow Rate (m/d)", fontsize=12)
@@ -562,4 +561,4 @@ else:
     ax_vo.grid(True)
     st.pyplot(fig_vo)
 
-st.success("Done! We skip Overall_Removal_% if fewer than 5 intersection points are found.")
+st.success("Done! We skip Overall_Removal_% if fewer than 3 intersection points are found.")

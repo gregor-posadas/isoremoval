@@ -535,6 +535,78 @@ legend.get_title().set_weight('bold')
 st.pyplot(fig)
 
 st.subheader("Interpolated Depths Table")
+
+with st.expander("📖 How This Table is Created (Step-by-Step)", expanded=False):
+    st.markdown("""
+    ### Why Do We Need Interpolation?
+    
+    Your raw data gives you removal percentages at **specific depths** (e.g., 13m, 25m, 37m, etc.). 
+    But what if you want to know where **exactly 50% removal** occurs? It might be between two of your measurement depths!
+    
+    **Interpolation** lets us estimate values between our actual measurements. This is the tedious part that this tool automates for you!
+    
+    ---
+    
+    ### Step-by-Step Process
+    
+    **For each time point and each desired removal percentage (e.g., 50%), here's what happens:**
+    
+    **Step 1: Gather Data for This Time**
+    - Look at one column in the "Percent Removal Table" (one time point)
+    - Example: At t=20 minutes, you might have:
+      - Depth 13m → 45% removal
+      - Depth 25m → 48% removal
+      - Depth 37m → 52% removal  ← **We want 50%, which is between 25m and 37m!**
+      - Depth 49m → 55% removal
+      - (etc.)
+    
+    **Step 2: Find Where Your Desired % Falls**
+    - We want to find where 50% removal occurs
+    - We see it falls between depth 25m (48% removal) and depth 37m (52% removal)
+    
+    **Step 3: Linear Interpolation**
+    - Use the formula: `Depth = Depth₁ + (Depth₂ - Depth₁) × (Target% - %₁) / (%₂ - %₁)`
+    - Plug in values:
+      - Depth₁ = 25m, %₁ = 48%
+      - Depth₂ = 37m, %₂ = 52%
+      - Target% = 50%
+    - Calculate: `Depth = 25 + (37-25) × (50-48) / (52-48) = 25 + 12 × 0.5 = 31m`
+    
+    **Step 4: Record the Result**
+    - At t=20 minutes, 50% removal occurs at depth = 31m
+    - This goes in the table: Row "20", Column "50%", Value "31.0"
+    
+    **Step 5: Repeat for All Times and All Percentages**
+    - Do this for every time point (every row)
+    - Do this for every requested removal % (every column)
+    - The result is the complete "Interpolated Depths Table" below
+    
+    ---
+    
+    ### From Table to Curves
+    
+    **How this becomes an isoremoval curve:**
+    - Take one column (e.g., the 50% column)
+    - Plot all those depths vs. their corresponding times
+    - Connect the dots → You get the "50% isoremoval curve"!
+    
+    **That's why this table is crucial:** Each column becomes one curve in your plot.
+    
+    ---
+    
+    ### Why This is Tedious by Hand
+    
+    Imagine doing this manually:
+    - 15 time points × 8 removal percentages = **120 interpolations**
+    - Each interpolation requires:
+      - Finding which two depths bracket your target %
+      - Doing the math
+      - Recording the result
+    - **Total time: 1-2 hours of tedious calculations!**
+    
+    This tool does it all in seconds. 🎉
+    """)
+
 st.markdown("""
 **What is this?** This table shows the **depth** where each removal percentage occurs at different times.
 
@@ -545,9 +617,6 @@ st.markdown("""
 
 💡 **Example**: If you see "45.2" at time=20min and column=50%, that means the 50% removal level 
 is located at a depth of 45.2m after 20 minutes.
-
-**Why it matters**: This data is what creates the isoremoval curves you see in the plot above. 
-Each column becomes one curve when plotted.
 """)
 st.dataframe(iso_depths.round(3))
 
@@ -556,74 +625,161 @@ st.dataframe(iso_depths.round(3))
 # -------------------------------------------------------------------------
 st.header("Turbidity Removal vs. Detention Time & Overflow Rate")
 
-with st.expander("ℹ️ Understanding These Engineering Plots", expanded=False):
+with st.expander("📖 How These Plots are Generated (Step-by-Step)", expanded=True):
     st.markdown("""
-    ### What are these plots?
-    These plots show the relationship between **overall turbidity removal** and two critical design parameters 
-    for settling tanks: **detention time** and **overflow rate**.
+    ### Overview
+    
+    These plots show the relationship between **overall turbidity removal** and two design parameters. 
+    Here's **exactly** how each data point is calculated and plotted.
     
     ---
     
-    ### Detention Time vs. Removal
+    ## Step-by-Step Calculation Process
     
-    **Detention Time** = How long water stays in the settling tank (usually in hours)
+    ### For Each Isoremoval Curve (e.g., 30%, 40%, 50%, etc.):
     
-    **What the plot shows:**
-    - X-axis: Detention time (hours)
-    - Y-axis: Overall turbidity removal (%)
-    - **Expected trend**: ⬆️ Longer time → Higher removal (curve goes UP to the right)
+    #### **Step 1: Find When the Curve Hits the Bottom**
     
-    **Physical meaning:**
-    - More time = particles have more opportunity to settle = better removal
-    - This plot helps you decide: "How long do I need to keep water in my tank to get X% removal?"
+    Look at the isoremoval curve (from the plot above) and find when it reaches your maximum depth.
     
-    **Engineering trade-off:**
-    - Longer detention time = Better removal ✅
-    - Longer detention time = Larger (more expensive) tank ❌
+    **Example:** 
+    - Your maximum depth is 85m
+    - The 50% isoremoval curve reaches 85m at time = 32.5 minutes
+    - **This time (32.5 min) becomes the "detention time" for this curve**
     
-    💡 **Example**: If you need 70% removal, read across from 70% to find the required detention time (maybe 0.8 hours).
+    **Why?** This represents how long water would need to stay in a settling tank to achieve 
+    that removal percentage across the full depth.
     
     ---
     
-    ### Overflow Rate vs. Removal
+    #### **Step 2: Calculate Detention Time (hours)**
     
-    **Overflow Rate** = Surface loading rate = Flow rate / Surface area (units: m/day or similar)
+    Convert the time from minutes to hours:
     
-    **What the plot shows:**
-    - X-axis: Overflow rate (m/d)
-    - Y-axis: Overall turbidity removal (%)
-    - **Expected trend**: ⬇️ Higher overflow rate → Lower removal (curve goes DOWN to the right)
+    ```
+    Detention Time (hours) = Time to reach bottom (min) / 60
+    ```
     
-    **Physical meaning:**
-    - Higher overflow rate = Faster flow = Less time to settle = Lower removal
-    - Lower overflow rate = Slower flow = More time to settle = Higher removal
-    
-    **Engineering trade-off:**
-    - Lower overflow rate = Better removal ✅
-    - Lower overflow rate = Larger surface area needed = More expensive ❌
-    
-    💡 **Example**: If you need 70% removal, read across from 70% to find the maximum overflow rate you can use (maybe 2000 m/d).
+    **Example:**
+    - Time = 32.5 minutes
+    - Detention Time = 32.5 / 60 = **0.542 hours**
     
     ---
     
-    ### How are these calculated?
+    #### **Step 3: Calculate Overflow Rate**
     
-    For each isoremoval curve that reaches the bottom of your column:
-    1. Find the **time** when it hits the bottom → This is the detention time
-    2. Calculate: Overflow Rate = (Column Depth / Time) × 1440 min/day
-    3. Calculate the **overall removal** by integrating across all depths at that time
-    4. Plot the point
+    The overflow rate represents how fast water is flowing through per unit area:
+    
+    ```
+    Overflow Rate (m/d) = (Column Depth / Time in minutes) × 1440 min/day
+    ```
+    
+    **Example:**
+    - Column Depth = 85m
+    - Time = 32.5 minutes
+    - Overflow Rate = (85 / 32.5) × 1440 = **3,764 m/d**
+    
+    **Why 1440?** That's the number of minutes in a day (60 min/hr × 24 hr/day), which converts our rate to m/day.
     
     ---
     
-    ### Real-world application
+    #### **Step 4: Calculate Overall Removal at This Time**
     
-    Water treatment plant designers use these relationships to:
-    - **Size settling basins**: "For 70% removal at 10,000 m³/day flow, I need X m² of surface area"
-    - **Predict performance**: "If I change my flow rate, how will removal change?"
-    - **Optimize costs**: Balance tank size (capital cost) vs. removal efficiency (treatment quality)
+    Now we need to calculate what the **overall removal** is at time = 32.5 minutes.
     
-    Your lab data could actually be used to design a real settling basin! 🏗️
+    **This is the most complex step:**
+    
+    **4a) Gather removal data at t=32.5 min:**
+    - Go back to your Percent Removal table
+    - For each depth, find what the removal % is at time = 32.5 minutes
+      - At depth 13m: 62% removal
+      - At depth 25m: 65% removal
+      - At depth 37m: 67% removal
+      - At depth 49m: 69% removal
+      - At depth 61m: 71% removal
+      - At depth 73m: 73% removal
+      - At depth 85m: 75% removal
+    
+    **4b) Integrate across depths:**
+    - We use **trapezoidal integration** to find the average removal across all depths
+    - Formula: `Overall Removal = (1/H) × ∫ R(z) dz`
+    - Where H = total depth, R(z) = removal at depth z
+    
+    **Simplified explanation:**
+    - Imagine the column is divided into layers
+    - Each layer has a certain removal %
+    - We calculate the weighted average based on layer thickness
+    - Result: **Overall Removal = 68.5%**
+    
+    **4c) Add boundary condition:**
+    - At the very top (depth = 0), removal is always 100% (no particles have entered yet)
+    - This is included in the integration
+    
+    ---
+    
+    #### **Step 5: Record the Data Point**
+    
+    Now we have one complete data point:
+    - **Detention Time**: 0.542 hours
+    - **Overflow Rate**: 3,764 m/d  
+    - **Overall Removal**: 68.5%
+    
+    This creates:
+    - One point on the "Detention Time vs. Removal" plot: (0.542, 68.5)
+    - One point on the "Overflow Rate vs. Removal" plot: (3764, 68.5)
+    
+    ---
+    
+    #### **Step 6: Repeat for All Curves**
+    
+    Do Steps 1-5 for every isoremoval curve you plotted:
+    - 30% curve → Calculate detention time, overflow rate, overall removal → Plot point
+    - 40% curve → Calculate detention time, overflow rate, overall removal → Plot point
+    - 50% curve → Calculate detention time, overflow rate, overall removal → Plot point
+    - (etc.)
+    
+    ---
+    
+    #### **Step 7: Connect the Dots**
+    
+    - Sort all points by detention time (or overflow rate)
+    - Connect them with lines
+    - You now have your two engineering plots!
+    
+    ---
+    
+    ## What the Results Mean
+    
+    ### Detention Time Plot
+    - **Shows**: How removal improves with longer settling time
+    - **Trend**: Should go **UP** (more time = more removal)
+    - **Engineering use**: "To get 70% removal, I need detention time ≥ X hours"
+    
+    ### Overflow Rate Plot  
+    - **Shows**: How removal decreases with faster flow
+    - **Trend**: Should go **DOWN** (faster flow = less removal)
+    - **Engineering use**: "To get 70% removal, I need overflow rate ≤ Y m/day"
+    
+    ---
+    
+    ## Why This Matters
+    
+    These relationships let engineers:
+    
+    1. **Size settling tanks**: 
+       - "I need 80% removal at 50,000 m³/day flow"
+       - Use detention time plot → Find required detention time (say, 2 hours)
+       - Calculate: Tank Volume = Flow × Detention Time = 50,000 × 2/24 = 4,167 m³
+    
+    2. **Calculate surface area**:
+       - Use overflow rate plot → Find maximum overflow rate (say, 1,000 m/day)
+       - Calculate: Area = Flow / Overflow Rate = 50,000 / 1,000 = 50 m²
+    
+    3. **Predict performance**:
+       - "If I change my flow rate, how will removal change?"
+       - Use these plots to estimate new performance
+    
+    Your lab data could actually design a real treatment plant! 🏗️
     """)
 
 def find_time_for_bottom(p_):

@@ -23,105 +23,57 @@ st.set_page_config(
 st.title("Isoremoval Curves Generator")
 
 st.markdown("""
-This code generates isoremoval curves with intelligent handling of real-world data.
-**Features:**
-- Automatic data quality assessment
-- Adaptive smoothing based on data characteristics
-- Monotonicity enforcement
-- Smart curve filtering for low-stratification data
+This tool analyzes settling column data to generate isoremoval curves and calculate turbidity removal efficiency.
+Upload your data file and adjust parameters in the sidebar to begin.
 """)
 
-# -------------------------------------------------------------------------
-# Teaching Notes Section
-# -------------------------------------------------------------------------
-with st.expander("📚 Teaching Notes & Tips for Students", expanded=False):
+with st.expander("❓ Quick Start Guide", expanded=False):
     st.markdown("""
-    ### Understanding Isoremoval Curves
+    ### First Time Using This Tool?
     
-    **What are isoremoval curves?**
-    - Each curve represents a constant percentage of turbidity removal
-    - They show how deep particles must settle over time to achieve that removal percentage
-    - Example: The 50% curve shows when and where 50% of turbidity has been removed
+    **Step 1: Prepare Your Data**
+    - Format: CSV or Excel file
+    - First column: Depths (in meters, feet, cm, or inches)
+    - Column headers: Time points (in minutes, must be numbers)
+    - Data cells: Turbidity measurements (NTU)
+    - [Download the sample file](#) to see the expected format
     
-    **Why are they useful?**
-    - Help design settling tanks and clarifiers
-    - Predict performance at different flow rates
-    - Understand particle settling behavior
+    **Step 2: Upload & Configure**
+    1. Upload your data file using the sidebar
+    2. Enter your **initial turbidity** (before particles were added)
+    3. Select your depth units
+    4. Adjust the maximum depth if needed (0 = use data's max)
     
-    ---
+    **Step 3: Adjust Processing (Optional)**
+    - **Enable Smoothing**: Reduces noise in your measurements (recommended for real lab data)
+    - **Smoothing Strength**: Higher values = smoother curves (start with default)
+    - **Enforce Monotonicity**: Prevents curves from going backward (recommended: ON)
+    - **Auto-filter Curves**: Only shows curves within your data range (recommended: ON)
     
-    ### Interpreting Your Results
-    
-    **Good Data Characteristics:**
-    - ✅ Curves that are smooth and monotonically increasing (depth increases with time)
-    - ✅ Clear separation between different percentage curves
-    - ✅ Curves that reach the bottom of your column
-    
-    **What if my curves look strange?**
-    - If curves are jagged → Try increasing smoothing strength
-    - If curves are too flat → Test may need longer duration
-    - If curves are missing → May be outside your data's removal range
-    
-    ---
-    
-    ### Understanding the Final Plots
-    
-    **Detention Time vs. Removal:**
-    - Shows how removal efficiency improves with longer settling time
-    - **Key insight:** Longer time = better removal, but requires larger tank!
-    - Should show **increasing** trend (more time = more removal)
-    
-    **Overflow Rate vs. Removal:**
-    - Shows how removal decreases with faster flow
-    - Overflow rate = Flow/Area (how fast water moves through tank)
-    - Should show **decreasing** trend (faster flow = less removal)
-    - **Engineering trade-off:** Lower overflow rate = better removal but bigger/more expensive tank
+    **Step 4: Choose Curves to Plot**
+    - Enter percentages separated by commas (e.g., "30,40,50,60,70")
+    - Tool will warn you if curves are outside your data range
     
     ---
     
-    ### Tips for Success
+    ### Common Issues & Solutions
     
-    **Data Collection:**
-    1. Take measurements at consistent time intervals
-    2. Record turbidity at multiple depths throughout the column
-    3. Let the test run long enough to see significant settling
-    4. Initial turbidity should be measured before adding sample to column
-    
-    **Using This Tool:**
-    1. Enter your **initial turbidity** carefully - all calculations depend on this!
-    2. Start with default smoothing settings, adjust if curves look noisy
-    3. Use **auto-filter curves** to only plot removal percentages within your data range
-    4. Check the Data Quality Assessment - it tells you if your test duration was sufficient
-    
-    **Common Mistakes:**
-    - ❌ Wrong initial turbidity value → All removal percentages will be wrong
-    - ❌ Inconsistent depth units → Curves won't make sense
-    - ❌ Test too short → Won't see meaningful settling patterns
-    - ❌ Requesting curves outside data range → May see artifacts from extrapolation
+    | Problem | Solution |
+    |---------|----------|
+    | "No curves to plot" error | Disable auto-filter OR choose percentages within your removal range |
+    | Jagged, noisy curves | Increase smoothing strength (try 1.5 or 2.0) |
+    | Curves look too smooth | Decrease smoothing strength (try 0.3-0.5) |
+    | Missing final plots | Curves may not reach the bottom; check your data range |
+    | Wrong removal values | Double-check your initial turbidity value! |
+    | "Times must be numeric" error | Column headers must be numbers (not "10min") |
     
     ---
     
-    ### Physical Interpretation
-    
-    **What's actually happening in the settling column?**
-    - Heavier particles settle faster (appear at bottom sooner)
-    - Lighter particles settle slower (take longer to reach bottom)
-    - The isoremoval curves show this stratification over time
-    - In real settling basins, this same principle applies to design
-    
-    **Real-world application:**
-    - Water treatment plants use these concepts to design clarifiers
-    - Detention time determines tank size
-    - Overflow rate determines required surface area
-    - Your lab data could design an actual treatment facility!
-    
-    ---
-    
-    ### Need Help?
-    - Check that your data file format matches the sample
-    - Verify time headers are numeric (not text)
-    - Ensure depths are in ascending order
-    - Make sure initial turbidity matches your experiment
+    ### Tips for Best Results
+    - ✅ Make sure your initial turbidity is accurate - all calculations depend on it!
+    - ✅ Run your settling test long enough to see meaningful changes
+    - ✅ Take measurements at consistent time intervals
+    - ✅ Use the Data Quality Assessment to check if your test duration was sufficient
     """)
 
 st.markdown("---")
@@ -350,6 +302,13 @@ else:
     plot_max = np.max(depths)
 
 st.subheader("Your Uploaded Data (Turbidity)")
+st.markdown("""
+**What is this?** This is your raw experimental data showing turbidity (NTU) measurements at different depths and times.
+- **Rows**: Different depths in your settling column (shallow → deep)
+- **Columns**: Different times during your experiment
+- **Values**: Turbidity measurements in NTU
+- **Expected pattern**: In a good settling test, turbidity should generally decrease over time as particles settle out
+""")
 st.dataframe(df.style.format(precision=2))
 
 # -------------------------------------------------------------------------
@@ -365,6 +324,18 @@ min_removal_by_time = removal_df.min(axis=0)
 max_removal_by_time = removal_df.max(axis=0)
 
 st.subheader("Percent Removal (Table)")
+st.markdown("""
+**What is this?** This table converts your turbidity measurements into **percent removal** at each depth and time.
+
+**Calculation**: `% Removal = (Initial Turbidity - Measured Turbidity) / Initial Turbidity × 100`
+
+**How to read it:**
+- **Higher %** = More turbidity removed = Better settling at that location/time
+- **Lower %** = Less turbidity removed = Particles still suspended
+- **Typical pattern**: Removal % increases with both time (left to right) and depth (top to bottom)
+
+💡 **Example**: If you see 65% at depth 50m and time 30min, that means 65% of the original turbidity has been removed at that depth after 30 minutes.
+""")
 st.dataframe(removal_df.round(2))
 
 # -------------------------------------------------------------------------
@@ -489,6 +460,41 @@ def extend_final_segment(tvals, dvals, bottom):
     return tvals, dvals
 
 st.subheader("Generated Isoremoval Curves")
+
+with st.expander("ℹ️ Understanding Isoremoval Curves", expanded=False):
+    st.markdown("""
+    ### What are isoremoval curves?
+    Each curve represents a **constant percentage of turbidity removal**. They show how particles with different settling 
+    velocities move through the column over time.
+    
+    ### How to read this graph:
+    - **X-axis (Time)**: How long the settling process has been running
+    - **Y-axis (Depth)**: How deep into the column you are
+    - **Each curve**: Represents a specific % of removal (e.g., the "50%" curve)
+    - **Following a curve**: Shows where that removal percentage occurs at different times
+    
+    ### What does a "good" curve look like?
+    - ✅ **Smooth and monotonic**: Depth should always increase or stay constant as time increases (never go backwards)
+    - ✅ **Clear separation**: Different % curves should be spread out, not bunched together
+    - ✅ **Reaches the bottom**: Curves should extend to your maximum depth
+    
+    ### Physical interpretation:
+    - **Steeper curves** = Particles settling faster (high settling velocity)
+    - **Flatter curves** = Particles settling slower (low settling velocity)
+    - **Curves close together** = Limited settling occurred (short test duration or low initial turbidity)
+    
+    ### Why are they useful?
+    Engineers use these curves to design settling tanks and clarifiers in water treatment plants. They help determine:
+    - How large a settling tank needs to be
+    - What flow rate will achieve desired removal
+    - How long water needs to stay in the tank
+    
+    ### Troubleshooting:
+    - **Curves look jagged?** → Increase smoothing strength in the sidebar
+    - **Missing curves?** → They may be outside your data's removal range; try different percentages
+    - **Curves bunched together?** → Low stratification; test may need longer duration
+    """)
+
 fig, ax = plt.subplots(figsize=(14, 10))
 cmap_ = plt.get_cmap('tab20')
 colors_ = cmap_(np.linspace(0, 1, len(percent_list)))
@@ -529,12 +535,96 @@ legend.get_title().set_weight('bold')
 st.pyplot(fig)
 
 st.subheader("Interpolated Depths Table")
+st.markdown("""
+**What is this?** This table shows the **depth** where each removal percentage occurs at different times.
+
+**How to read it:**
+- **Rows**: Different time points during your experiment
+- **Columns**: Different removal percentages (the curves you requested)
+- **Values**: The depth (in your chosen units) where that removal % occurs at that time
+
+💡 **Example**: If you see "45.2" at time=20min and column=50%, that means the 50% removal level 
+is located at a depth of 45.2m after 20 minutes.
+
+**Why it matters**: This data is what creates the isoremoval curves you see in the plot above. 
+Each column becomes one curve when plotted.
+""")
 st.dataframe(iso_depths.round(3))
 
 # -------------------------------------------------------------------------
 # Overall Removal calculations
 # -------------------------------------------------------------------------
 st.header("Turbidity Removal vs. Detention Time & Overflow Rate")
+
+with st.expander("ℹ️ Understanding These Engineering Plots", expanded=False):
+    st.markdown("""
+    ### What are these plots?
+    These plots show the relationship between **overall turbidity removal** and two critical design parameters 
+    for settling tanks: **detention time** and **overflow rate**.
+    
+    ---
+    
+    ### Detention Time vs. Removal
+    
+    **Detention Time** = How long water stays in the settling tank (usually in hours)
+    
+    **What the plot shows:**
+    - X-axis: Detention time (hours)
+    - Y-axis: Overall turbidity removal (%)
+    - **Expected trend**: ⬆️ Longer time → Higher removal (curve goes UP to the right)
+    
+    **Physical meaning:**
+    - More time = particles have more opportunity to settle = better removal
+    - This plot helps you decide: "How long do I need to keep water in my tank to get X% removal?"
+    
+    **Engineering trade-off:**
+    - Longer detention time = Better removal ✅
+    - Longer detention time = Larger (more expensive) tank ❌
+    
+    💡 **Example**: If you need 70% removal, read across from 70% to find the required detention time (maybe 0.8 hours).
+    
+    ---
+    
+    ### Overflow Rate vs. Removal
+    
+    **Overflow Rate** = Surface loading rate = Flow rate / Surface area (units: m/day or similar)
+    
+    **What the plot shows:**
+    - X-axis: Overflow rate (m/d)
+    - Y-axis: Overall turbidity removal (%)
+    - **Expected trend**: ⬇️ Higher overflow rate → Lower removal (curve goes DOWN to the right)
+    
+    **Physical meaning:**
+    - Higher overflow rate = Faster flow = Less time to settle = Lower removal
+    - Lower overflow rate = Slower flow = More time to settle = Higher removal
+    
+    **Engineering trade-off:**
+    - Lower overflow rate = Better removal ✅
+    - Lower overflow rate = Larger surface area needed = More expensive ❌
+    
+    💡 **Example**: If you need 70% removal, read across from 70% to find the maximum overflow rate you can use (maybe 2000 m/d).
+    
+    ---
+    
+    ### How are these calculated?
+    
+    For each isoremoval curve that reaches the bottom of your column:
+    1. Find the **time** when it hits the bottom → This is the detention time
+    2. Calculate: Overflow Rate = (Column Depth / Time) × 1440 min/day
+    3. Calculate the **overall removal** by integrating across all depths at that time
+    4. Plot the point
+    
+    ---
+    
+    ### Real-world application
+    
+    Water treatment plant designers use these relationships to:
+    - **Size settling basins**: "For 70% removal at 10,000 m³/day flow, I need X m² of surface area"
+    - **Predict performance**: "If I change my flow rate, how will removal change?"
+    - **Optimize costs**: Balance tank size (capital cost) vs. removal efficiency (treatment quality)
+    
+    Your lab data could actually be used to design a real settling basin! 🏗️
+    """)
 
 def find_time_for_bottom(p_):
     srs = iso_depths[p_].dropna()

@@ -32,6 +32,101 @@ This code generates isoremoval curves with intelligent handling of real-world da
 """)
 
 # -------------------------------------------------------------------------
+# Teaching Notes Section
+# -------------------------------------------------------------------------
+with st.expander("📚 Teaching Notes & Tips for Students", expanded=False):
+    st.markdown("""
+    ### Understanding Isoremoval Curves
+    
+    **What are isoremoval curves?**
+    - Each curve represents a constant percentage of turbidity removal
+    - They show how deep particles must settle over time to achieve that removal percentage
+    - Example: The 50% curve shows when and where 50% of turbidity has been removed
+    
+    **Why are they useful?**
+    - Help design settling tanks and clarifiers
+    - Predict performance at different flow rates
+    - Understand particle settling behavior
+    
+    ---
+    
+    ### Interpreting Your Results
+    
+    **Good Data Characteristics:**
+    - ✅ Curves that are smooth and monotonically increasing (depth increases with time)
+    - ✅ Clear separation between different percentage curves
+    - ✅ Curves that reach the bottom of your column
+    
+    **What if my curves look strange?**
+    - If curves are jagged → Try increasing smoothing strength
+    - If curves are too flat → Test may need longer duration
+    - If curves are missing → May be outside your data's removal range
+    
+    ---
+    
+    ### Understanding the Final Plots
+    
+    **Detention Time vs. Removal:**
+    - Shows how removal efficiency improves with longer settling time
+    - **Key insight:** Longer time = better removal, but requires larger tank!
+    - Should show **increasing** trend (more time = more removal)
+    
+    **Overflow Rate vs. Removal:**
+    - Shows how removal decreases with faster flow
+    - Overflow rate = Flow/Area (how fast water moves through tank)
+    - Should show **decreasing** trend (faster flow = less removal)
+    - **Engineering trade-off:** Lower overflow rate = better removal but bigger/more expensive tank
+    
+    ---
+    
+    ### Tips for Success
+    
+    **Data Collection:**
+    1. Take measurements at consistent time intervals
+    2. Record turbidity at multiple depths throughout the column
+    3. Let the test run long enough to see significant settling
+    4. Initial turbidity should be measured before adding sample to column
+    
+    **Using This Tool:**
+    1. Enter your **initial turbidity** carefully - all calculations depend on this!
+    2. Start with default smoothing settings, adjust if curves look noisy
+    3. Use **auto-filter curves** to only plot removal percentages within your data range
+    4. Check the Data Quality Assessment - it tells you if your test duration was sufficient
+    
+    **Common Mistakes:**
+    - ❌ Wrong initial turbidity value → All removal percentages will be wrong
+    - ❌ Inconsistent depth units → Curves won't make sense
+    - ❌ Test too short → Won't see meaningful settling patterns
+    - ❌ Requesting curves outside data range → May see artifacts from extrapolation
+    
+    ---
+    
+    ### Physical Interpretation
+    
+    **What's actually happening in the settling column?**
+    - Heavier particles settle faster (appear at bottom sooner)
+    - Lighter particles settle slower (take longer to reach bottom)
+    - The isoremoval curves show this stratification over time
+    - In real settling basins, this same principle applies to design
+    
+    **Real-world application:**
+    - Water treatment plants use these concepts to design clarifiers
+    - Detention time determines tank size
+    - Overflow rate determines required surface area
+    - Your lab data could design an actual treatment facility!
+    
+    ---
+    
+    ### Need Help?
+    - Check that your data file format matches the sample
+    - Verify time headers are numeric (not text)
+    - Ensure depths are in ascending order
+    - Make sure initial turbidity matches your experiment
+    """)
+
+st.markdown("---")
+
+# -------------------------------------------------------------------------
 # Sidebar: Provide sample file & example
 # -------------------------------------------------------------------------
 st.sidebar.header("Upload Data File")

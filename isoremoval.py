@@ -72,7 +72,7 @@ uploaded_file = st.sidebar.file_uploader(
 st.sidebar.header("Input Parameters")
 
 init_conc = st.sidebar.number_input(
-    "Initial Concentration (mg/L)",
+    "Initial Turbidity (NTU)",
     min_value=0.0,
     value=20.0,
     step=0.1
@@ -185,7 +185,7 @@ with st.expander("📊 Data Quality Assessment", expanded=True):
             st.info("Small removal range - test may need longer duration")
     
     with col3:
-        st.metric("Concentration Variation", f"{quality['conc_variation']:.1f}%")
+        st.metric("Turbidity Variation", f"{quality['conc_variation']:.1f}%")
     
     if quality['non_monotonic_count'] > 0:
         st.warning(f"⚠️ {quality['non_monotonic_count']} non-monotonic data points detected (measurement noise)")
@@ -254,7 +254,7 @@ if max_depth_val>0:
 else:
     plot_max = np.max(depths)
 
-st.subheader("Your Uploaded Data (Concentrations)")
+st.subheader("Your Uploaded Data (Turbidity)")
 st.dataframe(df.style.format(precision=2))
 
 # -------------------------------------------------------------------------
@@ -439,7 +439,7 @@ st.dataframe(iso_depths.round(3))
 # -------------------------------------------------------------------------
 # Overall Removal calculations
 # -------------------------------------------------------------------------
-st.header("Suspended Solids Removal vs. Detention Time & Overflow Rate")
+st.header("Turbidity Removal vs. Detention Time & Overflow Rate")
 
 def find_time_for_bottom(p_):
     srs = iso_depths[p_].dropna()
@@ -527,16 +527,20 @@ def depth_of_curve_at_time(p_, tval):
     cand = dd_lo + slope * (p_ - r_lo)
     return np.clip(cand, 0, plot_max)
 
-def compute_overall_removal_top_only(tval):
+def compute_overall_removal(tval):
+    """
+    Compute overall removal with relaxed constraints - works with any number of intersection points >= 2
+    """
     pairs = []
-    pairs.append((100.0, 0.0))
+    pairs.append((100.0, 0.0))  # Top boundary
 
     for p_ in percent_list:
         d_ = depth_of_curve_at_time(p_, tval)
         if not np.isnan(d_) and 0 <= d_ <= plot_max:
             pairs.append((p_, d_))
 
-    if len(pairs) < 3:
+    # RELAXED: Only need 2 points minimum (including top boundary)
+    if len(pairs) < 2:
         return np.nan
 
     pairs_s = sorted(pairs, key=lambda x: x[1])
@@ -562,7 +566,9 @@ for p_ in percent_list:
         continue
 
     vo = (plot_max / t_bot) * 1440.0
-    R_tot = compute_overall_removal_top_only(t_bot)
+    R_tot = compute_overall_removal(t_bot)
+    
+    # RELAXED: Accept even if NaN, but skip only truly invalid values
     if np.isnan(R_tot):
         continue
 
@@ -576,7 +582,7 @@ for p_ in percent_list:
     })
 
 if not results:
-    st.warning("No curves meet the bottom with sufficient data points.")
+    st.warning("Unable to compute detention times and overflow rates. This may occur if curves don't reach the bottom depth or if there's insufficient data for calculations.")
 else:
     final_df = pd.DataFrame(results).sort_values("Detention_Time_h")
     st.subheader("Summary of Intersection Times & Computed Removals")
@@ -587,7 +593,7 @@ else:
                marker='o', color='blue', linewidth=2, markersize=8)
     ax_dt.set_xlabel("Detention Time (hours)", fontsize=12)
     ax_dt.set_ylabel("Overall Removal (%)", fontsize=12)
-    ax_dt.set_title("Suspended Solids Removal vs. Detention Time", fontsize=14, weight='bold')
+    ax_dt.set_title("Turbidity Removal vs. Detention Time", fontsize=14, weight='bold')
     ax_dt.grid(True, alpha=0.3)
     st.pyplot(fig_dt)
 
@@ -596,7 +602,7 @@ else:
                marker='s', linestyle='--', color='red', linewidth=2, markersize=8)
     ax_vo.set_xlabel("Overflow Rate (m/d)", fontsize=12)
     ax_vo.set_ylabel("Overall Removal (%)", fontsize=12)
-    ax_vo.set_title("Suspended Solids Removal vs. Overflow Rate", fontsize=14, weight='bold')
+    ax_vo.set_title("Turbidity Removal vs. Overflow Rate", fontsize=14, weight='bold')
     ax_vo.grid(True, alpha=0.3)
     st.pyplot(fig_vo)
 

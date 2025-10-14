@@ -529,35 +529,54 @@ def depth_of_curve_at_time(p_, tval):
 
 def compute_overall_removal(tval):
     """
-    Compute overall removal with relaxed constraints - works with any number of intersection points >= 2
+    Compute overall removal using proper settling column theory.
+    Integration accounts for removal across the entire depth at time tval.
     """
-    pairs = []
-    pairs.append((100.0, 0.0))  # Top boundary
-
-    for p_ in percent_list:
-        d_ = depth_of_curve_at_time(p_, tval)
-        if not np.isnan(d_) and 0 <= d_ <= plot_max:
-            pairs.append((p_, d_))
-
-    # RELAXED: Only need 2 points minimum (including top boundary)
-    if len(pairs) < 2:
+    # Collect removal percentages at each depth at this specific time
+    depth_removal_pairs = []
+    
+    # For each measured depth, calculate what the removal is at time tval
+    for d_ in removal_df.index:
+        r_ = interp_time_removal[d_](tval)
+        if 0 <= r_ <= 100:  # Valid removal percentage
+            depth_removal_pairs.append((d_, r_))
+    
+    if len(depth_removal_pairs) < 2:
         return np.nan
-
-    pairs_s = sorted(pairs, key=lambda x: x[1])
+    
+    # Sort by depth
+    depth_removal_pairs = sorted(depth_removal_pairs, key=lambda x: x[0])
+    
+    # Add top boundary (depth=0, removal=100%)
+    depth_removal_pairs.insert(0, (0.0, 100.0))
+    
+    # If no point at bottom, extrapolate to bottom
+    if depth_removal_pairs[-1][0] < plot_max:
+        # Linear extrapolation to bottom
+        if len(depth_removal_pairs) >= 2:
+            d1, r1 = depth_removal_pairs[-2]
+            d2, r2 = depth_removal_pairs[-1]
+            if d2 > d1:
+                slope = (r2 - r1) / (d2 - d1)
+                r_bottom = r2 + slope * (plot_max - d2)
+                r_bottom = np.clip(r_bottom, 0, 100)
+                depth_removal_pairs.append((plot_max, r_bottom))
+    
+    # Perform trapezoidal integration: Overall Removal = (1/H) * ∫ R(z) dz
     H = plot_max
-    R_total = 0.0
-
-    prevR, prevD = pairs_s[0]
-    for i in range(1, len(pairs_s)):
-        curR, curD = pairs_s[i]
-        deltaD = curD - prevD
-        if deltaD < 0:
-            continue
-        R_total += (deltaD / H) * (curR - prevR)
-        prevR, prevD = curR, curD
-
-    R_total += pairs_s[0][0]
-    return np.clip(R_total, 0, 100)
+    integral = 0.0
+    
+    for i in range(1, len(depth_removal_pairs)):
+        d1, r1 = depth_removal_pairs[i-1]
+        d2, r2 = depth_removal_pairs[i]
+        
+        # Trapezoidal rule
+        delta_d = d2 - d1
+        avg_removal = (r1 + r2) / 2.0
+        integral += avg_removal * delta_d
+    
+    overall_removal = integral / H
+    return np.clip(overall_removal, 0, 100)
 
 results = []
 for p_ in percent_list:

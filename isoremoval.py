@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
+from scipy.ndimage import gaussian_filter1d
 from matplotlib.patches import FancyBboxPatch
 import base64
 from io import BytesIO
@@ -22,9 +23,12 @@ st.set_page_config(
 st.title("Isoremoval Curves Generator")
 
 st.markdown("""
-This code generates isoremoval curves and calculates Overall_Removal_% **only** if 
-the vertical line for that bottom‐intersecting curve yields at least **3** intersection 
-points (including the top boundary). This helps avoid 'spikes' when data is too sparse.
+This code generates isoremoval curves with intelligent handling of real-world data.
+**Features:**
+- Automatic data quality assessment
+- Adaptive smoothing based on data characteristics
+- Monotonicity enforcement
+- Smart curve filtering for low-stratification data
 """)
 
 # -------------------------------------------------------------------------
@@ -54,23 +58,6 @@ def get_sample_link():
     sample = generate_sample_excel()
     b64 = base64.b64encode(sample.read()).decode()
     return f'<a href="data:application/octet-stream;base64,{b64}" download="sample_isoremoval.xlsx">Download Sample Excel</a>'
-
-# Example table shown in the sidebar
-st.sidebar.markdown("""
-**Expected Format (example):**
-
-| Depth (m) |  10 |  20 |  35 |  50 |  70 |  85 |
-|-----------|-----|-----|-----|-----|-----|-----|
-|  0.5      |14   |10   |7    |6.2  |5    |4    |
-|  1.0      |15   |13   |10.6 |8.2  |7    |6    |
-|  1.5      |15.4 |14.2 |12   |10   |7.8  |7    |
-|  2.0      |16   |14.6 |12.6 |11   |9    |8    |
-|  2.5      |17   |15   |13   |11.4 |10   |8.8  |
-
-*First column:* Depth (m)  
-*Column headers:* times (minutes)  
-*Cells:* measured concentration (mg/L)
-""")
 
 st.sidebar.markdown(get_sample_link(), unsafe_allow_html=True)
 
@@ -152,6 +139,114 @@ if concentrations.shape!=(len(depths), len(times)):
     st.error("Data shape mismatch.")
     st.stop()
 
+# -------------------------------------------------------------------------
+# NEW: Assess Data Quality and Stratification
+# -------------------------------------------------------------------------
+def assess_data_stratification(conc_matrix, depths_arr, init_c):
+    """Assess how well-stratified the settling data is"""
+    # Look at final time point
+    final_concs = conc_matrix[:, -1]
+    conc_range = np.max(final_concs) - np.min(final_concs)
+    conc_variation = conc_range / np.max(final_concs) * 100
+    
+    # Calculate removals at final time
+    final_removals = (init_c - final_concs) / init_c * 100
+    removal_range = np.max(final_removals) - np.min(final_removals)
+    
+    # Check for non-monotonic behavior
+    issues = []
+    for i in range(len(depths_arr)):
+        for j in range(1, conc_matrix.shape[1]):
+            if conc_matrix[i, j] > conc_matrix[i, j-1]:
+                issues.append((depths_arr[i], j))
+    
+    return {
+        'conc_range': conc_range,
+        'conc_variation': conc_variation,
+        'removal_range': removal_range,
+        'non_monotonic_count': len(issues),
+        'stratification_quality': 'High' if removal_range > 25 else 'Medium' if removal_range > 10 else 'Low'
+    }
+
+quality = assess_data_stratification(concentrations, depths, init_conc)
+
+# Display data quality assessment
+with st.expander("📊 Data Quality Assessment", expanded=True):
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Stratification Quality", quality['stratification_quality'])
+        if quality['stratification_quality'] == 'Low':
+            st.warning("⚠️ Low stratification detected")
+    
+    with col2:
+        st.metric("Removal Range", f"{quality['removal_range']:.1f}%")
+        if quality['removal_range'] < 10:
+            st.info("Small removal range - test may need longer duration")
+    
+    with col3:
+        st.metric("Concentration Variation", f"{quality['conc_variation']:.1f}%")
+    
+    if quality['non_monotonic_count'] > 0:
+        st.warning(f"⚠️ {quality['non_monotonic_count']} non-monotonic data points detected (measurement noise)")
+    
+    if quality['stratification_quality'] == 'Low':
+        st.info("""
+        **Low Stratification Recommendations:**
+        - The test may not have run long enough for significant settling
+        - Consider using higher smoothing values
+        - Focus on curves that fall within your data's removal range
+        - Results may be less reliable than highly-stratified data
+        """)
+
+# -------------------------------------------------------------------------
+# Data Processing Options (with smart defaults)
+# -------------------------------------------------------------------------
+st.sidebar.header("Data Processing Options")
+
+# Auto-adjust defaults based on data quality
+default_smoothing = 1.5 if quality['stratification_quality'] == 'Low' else 0.8 if quality['stratification_quality'] == 'Medium' else 0.5
+default_enable_smoothing = quality['non_monotonic_count'] > 0
+
+enable_smoothing = st.sidebar.checkbox(
+    "Enable Data Smoothing",
+    value=default_enable_smoothing,
+    help="Recommended for noisy data"
+)
+
+smoothing_sigma = st.sidebar.slider(
+    "Smoothing Strength",
+    min_value=0.1,
+    max_value=3.0,
+    value=default_smoothing,
+    step=0.1,
+    help=f"Recommended: {default_smoothing} for this dataset",
+    disabled=not enable_smoothing
+)
+
+enforce_monotonicity = st.sidebar.checkbox(
+    "Enforce Monotonicity",
+    value=True,
+    help="Prevent curves from reversing direction"
+)
+
+filter_curves = st.sidebar.checkbox(
+    "Auto-filter Curves",
+    value=True,
+    help="Only show curves within the data's removal range"
+)
+
+# -------------------------------------------------------------------------
+# Apply smoothing if enabled
+# -------------------------------------------------------------------------
+if enable_smoothing:
+    concentrations_smoothed = np.copy(concentrations)
+    for i in range(len(depths)):
+        concentrations_smoothed[i, :] = gaussian_filter1d(concentrations[i, :], sigma=smoothing_sigma)
+    concentrations_to_use = concentrations_smoothed
+else:
+    concentrations_to_use = concentrations
+
 if max_depth_val>0:
     plot_max = max_depth_val
     if plot_max<np.max(depths):
@@ -165,10 +260,15 @@ st.dataframe(df.style.format(precision=2))
 # -------------------------------------------------------------------------
 # 2. Compute Removals
 # -------------------------------------------------------------------------
-removals = (init_conc - concentrations)/init_conc*100
+removals = (init_conc - concentrations_to_use)/init_conc*100
 removal_df = pd.DataFrame(removals, index=depths, columns=times)
 removal_df.index.name = f"Depth ({depth_units})"
 removal_df.columns.name = "Time (min)"
+
+# Calculate min/max removal at each time
+min_removal_by_time = removal_df.min(axis=0)
+max_removal_by_time = removal_df.max(axis=0)
+
 st.subheader("Percent Removal (Table)")
 st.dataframe(removal_df.round(2))
 
@@ -184,7 +284,22 @@ try:
 except:
     user_list = [10,20,30,40,50,60,70,80]
 
-percent_list = sorted(list(set(user_list)))
+# Filter curves based on data range if enabled
+if filter_curves:
+    data_min = removal_df.min().min()
+    data_max = removal_df.max().max()
+    user_list_filtered = [u for u in user_list if data_min <= u <= data_max]
+    if len(user_list_filtered) < len(user_list):
+        excluded = set(user_list) - set(user_list_filtered)
+        st.info(f"ℹ️ Auto-filtered curves outside data range ({data_min:.1f}% - {data_max:.1f}%): {sorted(excluded)}")
+    percent_list = sorted(list(set(user_list_filtered)))
+else:
+    percent_list = sorted(list(set(user_list)))
+
+if len(percent_list) == 0:
+    st.error("No curves to plot within data range. Adjust your curve selection or disable auto-filtering.")
+    st.stop()
+
 times_ref = np.arange(0, max(times)+10, step=5)
 iso_depths = pd.DataFrame(index=times_ref, columns=percent_list)
 
@@ -195,10 +310,6 @@ for d_ in removal_df.index:
     interp_time_removal[d_] = interp1d(t_, r_, kind='linear', fill_value="extrapolate")
 
 def invert_removal_depth(perc, tval):
-    """
-    For a given time tval, we compute removal at each depth, then invert for `perc`.
-    Returns the depth where removal=perc, or NaN if out of range.
-    """
     all_r = []
     all_d = []
     for d_ in removal_df.index:
@@ -207,7 +318,7 @@ def invert_removal_depth(perc, tval):
         all_d.append(d_)
 
     all_r = np.array(all_r)
-    all_d = np.array(all_d)  # ensure we have array of depths, not .shape
+    all_d = np.array(all_d)
 
     mask_ = (all_r >= 0) & (all_r <= 100)
     r_ok = all_r[mask_]
@@ -241,7 +352,6 @@ for p_ in percent_list:
     depth_list = []
     for t_ in times_ref:
         if t_ == 0.0:
-            # define depth=0 at time=0
             depth_list.append(0.0)
             continue
         dd_ = invert_removal_depth(p_, t_)
@@ -249,6 +359,14 @@ for p_ in percent_list:
 
     arr_ = np.array(depth_list)
     arr_ = np.clip(arr_, 0, plot_max)
+    
+    # Enforce monotonicity if enabled
+    if enforce_monotonicity:
+        for i in range(1, len(arr_)):
+            if not np.isnan(arr_[i]) and not np.isnan(arr_[i-1]):
+                if arr_[i] < arr_[i-1]:
+                    arr_[i] = arr_[i-1]
+    
     iso_depths[p_] = arr_
 
 def extend_final_segment(tvals, dvals, bottom):
@@ -294,13 +412,13 @@ for p_, col_ in zip(percent_list, colors_):
     d_ok = d_ok[sidx]
 
     t_ext, d_ext = extend_final_segment(t_ok, d_ok, plot_max)
-    ax.plot(t_ext, d_ext, color=col_, label=f"{p_}%")
+    ax.plot(t_ext, d_ext, color=col_, label=f"{p_}%", linewidth=2.5)
 
-ax.set_xlabel("Time(min)", fontsize=14, weight='bold')
-ax.set_ylabel(f"Depth({depth_units})", fontsize=14, weight='bold')
+ax.set_xlabel("Time (min)", fontsize=14, weight='bold')
+ax.set_ylabel(f"Depth ({depth_units})", fontsize=14, weight='bold')
 ax.set_title("Isoremoval Curves", fontsize=16, weight='bold')
 ax.set_ylim(plot_max, 0)
-ax.grid(True, linestyle='--', linewidth=0.5)
+ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.7)
 plt.subplots_adjust(bottom=0.25)
 
 handles, labels = ax.get_legend_handles_labels()
@@ -309,80 +427,21 @@ legend = ax.legend(
     title="Percent Removal",
     loc='upper center',
     bbox_to_anchor=(0.5, -0.25),
-    ncol=6, fontsize=8, title_fontsize=10,
+    ncol=min(6, len(percent_list)), fontsize=8, title_fontsize=10,
     frameon=True
 )
 legend.get_title().set_weight('bold')
-legend.get_frame().set_facecolor('#f9f9f9')
-legend.get_frame().set_edgecolor('gray')
-legend.get_frame().set_linewidth(1.5)
-legend.get_frame().set_boxstyle('round,pad=0.3,rounding_size=0.2')
-legend.get_frame().set_alpha(0.9)
-
-legend_box = legend.get_frame()
-shadow_box = FancyBboxPatch(
-    (legend_box.get_x() - 0.02, legend_box.get_y() - 0.02),
-    legend_box.get_width() + 0.04,
-    legend_box.get_height() + 0.04,
-    boxstyle='round,pad=0.3,rounding_size=0.2',
-    linewidth=0,
-    color='gray',
-    alpha=0.2,
-    zorder=0
-)
-ax.add_patch(shadow_box)
 st.pyplot(fig)
 
 st.subheader("Interpolated Depths Table")
 st.dataframe(iso_depths.round(3))
 
-st.subheader("Isoremoval Subplots")
-n_sub = len(percent_list)
-n_cols = 4
-n_rows = (n_sub + n_cols - 1) // n_cols
-fig_sub, axes_sub = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), constrained_layout=True)
-axes_sub = axes_sub.flatten()
-for i, (pp, cc) in enumerate(zip(percent_list, colors_)):
-    axx = axes_sub[i]
-    dd_ = iso_depths[pp].values.astype(float)
-    tt_ = iso_depths.index.values.astype(float)
-    mask_ = ~np.isnan(dd_)
-    tv_ = tt_[mask_]
-    dv_ = dd_[mask_]
-    if len(tv_) < 2:
-        axx.set_title(f"{pp}% (no data)")
-        axx.invert_yaxis()
-        axx.grid(True, linestyle='--', linewidth=0.5)
-        continue
-
-    sidx_ = np.argsort(tv_)
-    tv_ = tv_[sidx_]
-    dv_ = dv_[sidx_]
-
-    tv_ex, dv_ex = extend_final_segment(tv_, dv_, plot_max)
-    axx.plot(tv_ex, dv_ex, marker='o', color=cc, linewidth=1.5, markersize=3, label=f"{pp}%")
-    axx.invert_yaxis()
-    axx.set_title(f"{pp}% Removal", fontsize=12, weight='bold')
-    axx.set_xlabel("Time(min)", fontsize=10, weight='bold')
-    axx.set_ylabel(f"Depth({depth_units})", fontsize=10, weight='bold')
-    axx.grid(True, linestyle='--', linewidth=0.5)
-    axx.legend(fontsize=8)
-
-for j in range(i + 1, len(axes_sub)):
-    axes_sub[j].axis('off')
-
-fig_sub.suptitle("Isoremoval Curves - Subplots", fontsize=16, weight='bold')
-st.pyplot(fig_sub)
-
 # -------------------------------------------------------------------------
-# Overall Removal vs. Detention Time / Overflow Rate
+# Overall Removal calculations
 # -------------------------------------------------------------------------
 st.header("Suspended Solids Removal vs. Detention Time & Overflow Rate")
 
 def find_time_for_bottom(p_):
-    """
-    Interpolate time vs. depth from iso_depths => solve for depth=plot_max.
-    """
     srs = iso_depths[p_].dropna()
     if srs.empty:
         return None
@@ -430,9 +489,6 @@ def find_time_for_bottom(p_):
     return tl + slope * (plot_max - dl)
 
 def depth_of_curve_at_time(p_, tval):
-    """
-    'Second interpolation': gather removal vs. depth from removal_df at time tval, invert for p_.
-    """
     allr = []
     alld = []
     for d_ in removal_df.index:
@@ -441,7 +497,7 @@ def depth_of_curve_at_time(p_, tval):
         alld.append(d_)
 
     allr = np.array(allr)
-    alld = np.array(alld)  # <--- ensure we have array of depths
+    alld = np.array(alld)
 
     mask_ = (allr >= 0) & (allr <= 100)
     rr_ = allr[mask_]
@@ -472,27 +528,17 @@ def depth_of_curve_at_time(p_, tval):
     return np.clip(cand, 0, plot_max)
 
 def compute_overall_removal_top_only(tval):
-    """
-    We gather each real curve's depth at tval, plus top=100% at depth=0,
-    then do a piecewise integration from shallow->deep.
-
-    We skip if the total # of intersection points < 3.
-    """
     pairs = []
-    # top boundary
     pairs.append((100.0, 0.0))
 
-    # actual curves
     for p_ in percent_list:
         d_ = depth_of_curve_at_time(p_, tval)
         if not np.isnan(d_) and 0 <= d_ <= plot_max:
             pairs.append((p_, d_))
 
-    # If < 3 points, skip
     if len(pairs) < 3:
         return np.nan
 
-    # sort by depth ascending
     pairs_s = sorted(pairs, key=lambda x: x[1])
     H = plot_max
     R_total = 0.0
@@ -506,7 +552,6 @@ def compute_overall_removal_top_only(tval):
         R_total += (deltaD / H) * (curR - prevR)
         prevR, prevD = curR, curD
 
-    # Add the initial boundary's removal
     R_total += pairs_s[0][0]
     return np.clip(R_total, 0, 100)
 
@@ -516,13 +561,9 @@ for p_ in percent_list:
     if t_bot is None or t_bot < 1e-12:
         continue
 
-    # Compute overflow
     vo = (plot_max / t_bot) * 1440.0
-
-    # Compute overall removal
     R_tot = compute_overall_removal_top_only(t_bot)
     if np.isnan(R_tot):
-        # skip if <3 intersection points
         continue
 
     t_hrs = t_bot / 60.0
@@ -535,30 +576,28 @@ for p_ in percent_list:
     })
 
 if not results:
-    st.warning("No curves meet the bottom with >= 3 intersection points or no valid data.")
+    st.warning("No curves meet the bottom with sufficient data points.")
 else:
     final_df = pd.DataFrame(results).sort_values("Detention_Time_h")
     st.subheader("Summary of Intersection Times & Computed Removals")
     st.dataframe(final_df)
 
-    # Plot vs. detention
     fig_dt, ax_dt = plt.subplots(figsize=(7, 5))
     ax_dt.plot(final_df['Detention_Time_h'], final_df['Overall_Removal_%'],
-               marker='o', color='blue')
+               marker='o', color='blue', linewidth=2, markersize=8)
     ax_dt.set_xlabel("Detention Time (hours)", fontsize=12)
     ax_dt.set_ylabel("Overall Removal (%)", fontsize=12)
     ax_dt.set_title("Suspended Solids Removal vs. Detention Time", fontsize=14, weight='bold')
-    ax_dt.grid(True)
+    ax_dt.grid(True, alpha=0.3)
     st.pyplot(fig_dt)
 
-    # Plot vs. overflow rate
     fig_vo, ax_vo = plt.subplots(figsize=(7, 5))
     ax_vo.plot(final_df['Overflow_Rate_m_d'], final_df['Overall_Removal_%'],
-               marker='s', linestyle='--', color='red')
+               marker='s', linestyle='--', color='red', linewidth=2, markersize=8)
     ax_vo.set_xlabel("Overflow Rate (m/d)", fontsize=12)
     ax_vo.set_ylabel("Overall Removal (%)", fontsize=12)
     ax_vo.set_title("Suspended Solids Removal vs. Overflow Rate", fontsize=14, weight='bold')
-    ax_vo.grid(True)
+    ax_vo.grid(True, alpha=0.3)
     st.pyplot(fig_vo)
 
-st.success("Done! We skip Overall_Removal_% if fewer than 3 intersection points are found.")
+st.success("✓ Analysis complete!")

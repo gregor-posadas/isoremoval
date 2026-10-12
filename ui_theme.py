@@ -90,11 +90,14 @@ def md(text):
 _JS = r"""
 <script>
 (function () {
-  /* 1. Light mode on a first visit. Streamlit remembers the Light / Dark / System choice per page. */
+  /* 1. Light mode on a first visit. Streamlit remembers the Light / Dark / System choice per page path; on
+     Streamlit Community Cloud the app runs at an inner path (/~/+/), so the keys are built from the real path. */
   try {
-    if (!localStorage.getItem("ce323-theme-init")) {
-      localStorage.setItem("ce323-theme-init", "1");
-      ["/", "/accessibility"].forEach(function (p) {
+    if (!localStorage.getItem("ce323-theme-init-v2")) {
+      localStorage.setItem("ce323-theme-init-v2", "1");
+      var base = location.pathname.replace(/accessibility\/?$/, "");
+      if (base.slice(-1) !== "/") base += "/";
+      [base, base + "accessibility"].forEach(function (p) {
         localStorage.setItem("stActiveTheme-" + p + "-v2", JSON.stringify("Light"));
       });
       location.reload();
@@ -166,10 +169,13 @@ _JS = r"""
   doc.addEventListener("scroll", function () { if (open) place(open); }, { passive: true, capture: true });
 
   /* 3. Gentle reveal: blocks below the fold fade up as they scroll into view.
-     Nothing is hidden for reduced motion, without IntersectionObserver, or when printing. */
-  if (!("IntersectionObserver" in window)) return;
+     Fail-safe by design: visibility is checked directly on every scroll, resize and page change and on a
+     timer as a backstop, every block is fully shown again 0.9 s after its fade starts whatever happens, and
+     nothing is hidden at all for reduced motion, a hidden tab, or printing. */
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  if (doc.visibilityState === "hidden") return;
   doc.documentElement.classList.add("rv-on");
+  var pending = [];
   function done(el) { el.classList.remove("rv", "rv-in"); el.style.removeProperty("--rv-d"); }
   function reveal(el, delay) {
     if (!el.classList.contains("rv") || el.classList.contains("rv-in")) return;
@@ -177,31 +183,42 @@ _JS = r"""
     el.classList.add("rv-in");
     setTimeout(function () { done(el); }, 900 + (delay || 0));
   }
-  var io = new IntersectionObserver(function (es) {
-    var n = 0;
-    es.forEach(function (e) {
-      if (!e.isIntersecting) return;
-      io.unobserve(e.target);
-      reveal(e.target, Math.min(n++, 4) * 70);
+  function check() {
+    var vh = window.innerHeight || doc.documentElement.clientHeight, n = 0;
+    pending = pending.filter(function (el) {
+      if (!el.isConnected || !el.classList.contains("rv")) return false;
+      var r = el.getBoundingClientRect();
+      if (r.top < vh * 0.94 && r.bottom > 0) { reveal(el, Math.min(n++, 4) * 70); return false; }
+      return true;
     });
-  }, { rootMargin: "0px 0px -6% 0px", threshold: 0 });
+  }
   function scan() {
     var root = doc.querySelector('[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"]');
     if (!root) return;
-    var vh = window.innerHeight;
+    var vh = window.innerHeight || doc.documentElement.clientHeight;
     Array.prototype.forEach.call(root.children, function (el) {
       if (el.dataset.rvSeen) return;
       el.dataset.rvSeen = "1";
       if (el.getBoundingClientRect().top < vh * 0.92) return;   /* on screen already: no effect */
       el.classList.add("rv");
-      io.observe(el);
+      pending.push(el);
     });
+    check();
   }
+  var ticking = false;
+  function soon() { if (ticking) return; ticking = true; setTimeout(function () { ticking = false; check(); }, 16); }
+  doc.addEventListener("scroll", soon, { passive: true, capture: true });
+  window.addEventListener("resize", soon);
+  var mt = null;
+  new MutationObserver(function () { clearTimeout(mt); mt = setTimeout(scan, 60); }).observe(doc.body, { childList: true, subtree: true });
+  setInterval(check, 400);   /* backstop */
   scan();
-  new MutationObserver(function () { scan(); }).observe(doc.body, { childList: true, subtree: true });
   doc.addEventListener("focusin", function (e) {
     var el = e.target.closest && e.target.closest(".rv");
-    if (el) { io.unobserve(el); reveal(el, 0); }
+    if (el) reveal(el, 0);
+  });
+  doc.addEventListener("visibilitychange", function () {
+    if (doc.visibilityState === "hidden") Array.prototype.forEach.call(doc.querySelectorAll(".rv"), done);
   });
   window.addEventListener("beforeprint", function () {
     Array.prototype.forEach.call(doc.querySelectorAll(".rv"), done);

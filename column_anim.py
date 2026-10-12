@@ -27,8 +27,6 @@ def build(cv, depths, times, readings, c0, unit, munit, levels=()):
 
 
 HTML = r"""<!doctype html><html><head><meta charset="utf-8"><style>
-@font-face{font-family:"Open Sans";font-weight:400;src:url("/app/static/fonts/open-sans-latin-400-normal.woff2") format("woff2")}
-@font-face{font-family:"Open Sans";font-weight:700;src:url("/app/static/fonts/open-sans-latin-700-normal.woff2") format("woff2")}
 :root{--ink:#1b1a17;--ink2:#4d4a43;--rule:#d4ccbb;--focus:#0072b2}
 *{box-sizing:border-box}
 html,body{margin:0;background:#fff;color:var(--ink);font:16px/1.4 "Open Sans",system-ui,sans-serif}
@@ -55,6 +53,16 @@ label.ck{display:inline-flex;gap:6px;align-items:center;min-height:44px}
 </div>
 <p class="note" id="live" aria-live="polite"></p>
 </div>
+<script>
+/* Load the app's font from wherever the app is served (locally at /, on Streamlit Cloud at /~/+/). */
+(function(){ try {
+  var p = window.parent.location.pathname.replace(/accessibility\/?$/, ""); if (p.slice(-1) !== "/") p += "/";
+  [["400","open-sans-latin-400-normal"],["700","open-sans-latin-700-normal"]].forEach(function(a){
+    var f = new FontFace("Open Sans", "url(" + p + "app/static/fonts/" + a[1] + ".woff2)", {weight: a[0]});
+    f.load().then(function(x){ document.fonts.add(x); if (window.__redraw) window.__redraw(); }).catch(function(){});
+  });
+} catch (e) {} })();
+</script>
 <script>
 const D = __DATA__;
 const cv = document.getElementById("cv"), g = cv.getContext("2d");
@@ -142,6 +150,7 @@ slider.oninput = () => { stop(); setT(+slider.value, true); };
 slider.onchange = announce;
 document.getElementById("lv").onchange = draw;
 window.addEventListener("resize", resize);
+window.__redraw = resize;
 /* hook for recording: deterministic frame at time tt */
 window.__anim = { render: tt => { flash = {}; D.times.forEach(tm => { if (tt >= tm && tt - tm < 0.6*8) D.depths.forEach((_,i)=> flash[i] = 1 - (tt-tm)/(0.6*8)); }); t = clamp(tt,0,D.tlast); slider.value = t; draw(); }, duration: D.tlast };
 document.fonts && document.fonts.load('400 14px "Open Sans"').finally(resize);

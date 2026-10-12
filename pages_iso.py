@@ -9,6 +9,9 @@ import streamlit as st
 
 import iso_calc as ic
 import ui_theme as ui
+import column_anim
+import report_figs
+import streamlit.components.v1 as components
 from ui_theme import term, md
 
 BASIN_APP_URL = "https://sedimentationbasindesign.streamlit.app/"
@@ -94,6 +97,27 @@ def _compute(depths, times, conc, c0, H, cleanup, sigma, monotone, percents, uni
     rd = ic.removal_table(used, c0, depths, times)
     cv = ic.Curves(rd, H, list(percents), enforce_monotonicity=monotone)
     return used, rd, cv, cv.design_table(unit), cv.depth_table()
+
+
+@st.cache_data(show_spinner=False)
+def _replay_html(depths, times, used, c0, H, unit, munit, levels, monotone):
+    rd = ic.removal_table(used, c0, depths, times)
+    cv = ic.Curves(rd, H, list(levels), enforce_monotonicity=monotone)
+    return column_anim.build(cv, depths, times, used, c0, unit, munit, levels)
+
+
+def _figures_zip(cv, percents, unit, design, target, read, depths):
+    figs = []
+    f, _ = report_figs.curves_fig(cv, percents, unit, curve_points)
+    figs.append(("isoremoval_curves", f))
+    figs.append(("design_plots", report_figs.design_fig(design, percents, target, (read[0], read[1]) if read else None)))
+    rows = design["Curve (%)"].tolist()
+    p = st.session_state.get("_worked_p") if st.session_state.get("_worked_p") in rows else (50 if 50 in rows else rows[len(rows) // 2])
+    t_b = design[design["Curve (%)"] == p].iloc[0]["Reaches bottom at (min)"]
+    z, r = cv.removal_profile_at(t_b)
+    z, r = np.asarray(z, float), np.asarray(r, float)
+    figs.append((f"overall_removal_{p}pct", report_figs.profile_fig(z, r, unit, cv.H, _bands(z, cv.H, depths), p, t_b)))
+    return report_figs.bundle(figs)
 
 
 def curve_points(cv, p):
@@ -184,7 +208,7 @@ def curves_figure(cv, percents, unit, follow=None):
     fig.add_vline(x=cv.t_last, line=dict(color=ui.INK2, width=1.4, dash="dash"))
     fig.add_annotation(x=cv.t_last, y=1.0, yref="paper", yanchor="bottom", text=f"last reading ({cv.t_last:g} min)",
                        showarrow=False, font=dict(size=13, color=ui.INK2), xanchor="center")
-    ui.base_layout(fig, height=440, legend_title="Curves · click a name to hide it", n_items=len(percents), per_row=4,
+    ui.base_layout(fig, height=440, legend_title="Isoremoval curve (percent removal)", n_items=len(percents), per_row=4,
                    top=36)
     fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=12, title_text="Time since the test started (min)", range=[0, xmax]))
     fig.update_yaxes(**ui.style_axes(fig, title_text=f"Depth below the water surface ({unit})",
@@ -205,7 +229,7 @@ def design_figure(design, percents, target=None, read=None):
                           row=1, col=c)
             fig.add_shape(type="line", x0=xv, x1=xv, y0=0, y1=target, line=dict(color=ui.INK, width=1.6, dash="dash"),
                           row=1, col=c)
-            fig.add_trace(go.Scatter(x=[xv], y=[target], mode="markers", name=f"Your target: {target:g} %",
+            fig.add_trace(go.Scatter(x=[xv], y=[target], mode="markers", name=f"Target: {target:g} %",
                                      showlegend=(c == 1), legendgroup="target",
                                      marker=dict(symbol="star", size=15, color=ui.GOLD, line=dict(color=ui.INK, width=1.5)),
                                      hovertemplate=(f"<b>Target {target:g} %</b><br>Overflow rate ≈ {vo:.1f} m/d<br>"
@@ -231,7 +255,7 @@ def design_figure(design, percents, target=None, read=None):
             ), row=1, col=c)
             pt_map.append(p)
     n_leg = len(design) + (1 if target is not None and read is not None else 0)
-    ui.base_layout(fig, height=380, legend_title="One point per curve · click one", n_items=n_leg, per_row=4, top=56)
+    ui.base_layout(fig, height=380, legend_title="Isoremoval curve (hollow = extrapolated)", n_items=n_leg, per_row=4, top=56)
     ylo = max(0, design["Overall removal (%)"].min() - 8)
     fig.update_yaxes(**ui.style_axes(fig, range=[ylo, min(100, design["Overall removal (%)"].max() + 6)]))
     fig.update_yaxes(title_text="Overall removal (%)", row=1, col=1)
@@ -453,6 +477,18 @@ detention time (which sets its volume).</p>
         ic.clean_gaussian(conc, sigma) if cleanup == "gaussian" else conc)
     rd0 = ic.removal_table(used0, c0, depths, times)
 
+    st.subheader("Replay your test", anchor="replay")
+    md(f"This is your {T('settling column', 'column')}, rebuilt from your readings. Press play to watch it settle: dots are "
+       f"particles still in suspension, the ports flash at each sampling time, and your readings fill in the table as "
+       f"they were taken. The dashed lines mark where removal is 20 %, 40 %, 60 % … right now. Watch them sink: the "
+       f"paths they trace are the isoremoval curves you'll draw in Step 4.")
+    lo0, hi0 = float(np.clip(rd0.values, 0, 100).min()), float(np.clip(rd0.values, 0, 100).max())
+    lv = [p for p in range(20, 100, 20) if lo0 - 10 <= p <= hi0 + 10] or [50]
+    components.html(_replay_html(depths, times, used0, float(c0), float(H), unit, munit, tuple(lv), monotone),
+                    height=660, scrolling=False)
+    st.caption("Use Play, Start over and the time slider (arrow keys work on it). The text under the animation reads out "
+               "the removal at each port. Particles are drawn only where your data say they are still suspended.")
+
     # ---------------- Step 3 ----------------
     ui.step_header(3, "Turn readings into percent removal", "step-3")
     md(f"A reading on its own doesn't say much; what matters is how much of the starting concentration is gone. "
@@ -654,9 +690,12 @@ That's the right plot.</p>
         m3.metric("Detention time", f"{th:.2f} h", help=f"{th * 60:.0f} minutes")
         md(f"To remove {target:g} % of the particles, a basin needs an overflow rate of at most **{vo:,.1f} m/d** and a "
            f"detention time of at least **{th:.2f} h**." + (" Part of this rests on extrapolated points." if ex else ""))
-        st.link_button("Design the basin with these values", f"{BASIN_APP_URL}?vo={vo:.2f}&t={th:.3f}&R={target:g}",
+        vs = ",".join(f"{int(r['Curve (%)'])}:{r['Overflow rate (m/d)']:.2f}" for _, r in design.iterrows())
+        st.link_button("Design the basin with these values",
+                       f"{BASIN_APP_URL}?vo={vo:.2f}&t={th:.3f}&R={target:g}&vs={vs}",
                        icon=":material/open_in_new:", type="primary")
-        st.caption("Opens the Sedimentation Basin Design tool in a new tab with these three numbers filled in.")
+        st.caption("Opens the Sedimentation Basin Design tool in a new tab with these numbers filled in, and with your "
+                   "curves' settling speeds so its animated basin uses your own particles.")
 
     # ---------------- Downloads ----------------
     st.subheader("Save your results")
@@ -674,10 +713,14 @@ That's the right plot.</p>
                                   "moving up", "Source"],
                       "Value": [measure, f"{c0:g} {munit}", f"{H:g}", unit, CLEANUPS[cleanup], monotone, source]}
                      ).to_excel(xw, sheet_name="Settings", index=False)
-    st.download_button("Download all tables (.xlsx)", xbuf.getvalue(), "isoremoval_results.xlsx",
-                       icon=":material/download:")
-    st.caption("To save a chart as an image, use the camera icon at its top right. Charts save on a white background, "
-               "ready for a report.")
+    d1, d2 = st.columns(2)
+    d1.download_button("Download all tables (.xlsx)", xbuf.getvalue(), "isoremoval_results.xlsx",
+                       icon=":material/download:", use_container_width=True)
+    d2.download_button("Download figures (.zip)", _figures_zip(cv, percents, unit, design, target, read, depths),
+                       "isoremoval_figures.zip", icon=":material/download:", use_container_width=True)
+    st.caption("The figures download has report-ready versions of the curves chart, the two design plots and the "
+               "worked overall-removal profile, each as a 300 dpi PNG and a vector SVG, sized for a letter page. "
+               "You can also save any chart as shown with the camera icon at its top right.")
 
 
 def _explain_curve(cv, p, unit):
@@ -722,6 +765,7 @@ def _removal_example(cv, design, unit, wkey, depths):
     rows = design["Curve (%)"].tolist()
     p = st.selectbox("Curve (or click a point on the design plots)", rows, key=wkey,
                      format_func=lambda v: f"{v} % curve")
+    st.session_state["_worked_p"] = p
     row = design[design["Curve (%)"] == p].iloc[0]
     t_b = row["Reaches bottom at (min)"]
     z, r = cv.removal_profile_at(t_b)

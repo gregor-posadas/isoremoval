@@ -9,14 +9,19 @@ Those values then go into the [Sedimentation Basin Design tool](https://sediment
 
 ## Using it
 
-1. **Load your data.** Upload an Excel or CSV file, or use the sample data from the lecture. First column:
-   port depths. Column headings: sampling times in minutes. Cells: turbidity (NTU) or suspended solids (mg/L).
-2. **Describe your test.** Enter the starting value C₀, depth units and the column depth H. The data check
-   flags readings above C₀ and readings that go up over time.
-3. **Check the curves.** Pick the percentages to draw. Solid lines come from your readings; dotted lines
-   extend a curve past the last reading.
-4. **Read your design values.** Enter a target overall removal to read the overflow rate and detention time,
-   then download the tables and plots.
+The tool teaches the method as it goes, for students meeting isoremoval curves for the first time. A short
+"the idea" section comes first; dotted-underlined terms open a plain-language explanation.
+
+1. **Load your readings.** Upload an Excel or CSV file, or use the lecture's sample data. First column: port
+   depths. Column headings: sampling times in minutes. Cells: turbidity (NTU) or suspended solids (mg/L).
+2. **Describe your test.** Enter C₀, depth units and the column depth H. The check flags readings above C₀ and
+   readings that go up over time, and offers a clean-up.
+3. **Percent removal.** The removal table, shaded, with what to notice.
+4. **Isoremoval curves.** An interactive chart. Click a point (or pick a curve) to follow one curve and see why
+   it bends. Solid lines come from your readings; dotted lines continue past the last reading.
+5. **Curves to design values.** Detention time, overflow rate and overall removal for each curve, and the two
+   design plots side by side on a shared axis. Click a point to open its worked overall-removal calculation.
+6. **Read your design values.** Enter a target removal; the button opens the basin tool with the values filled in.
 
 ## Method
 
@@ -47,9 +52,10 @@ extended along their own last segment. For the sample data the 70 % curve reache
 
 ## Accessibility
 
-Atkinson Hyperlegible Next, 18 px text, light and dark themes that follow the device, 48 px targets, visible
-focus outlines, reduced motion, colour never used alone (marker shapes, direct labels, dotted extensions),
-a sentence and a table behind every figure. Plot colours: Crameri's Davos colour map and Jack Baker's figure
+Open Sans at 18 px, light mode by default with a dark mode in Settings, 48 px targets, visible focus outlines,
+scroll reveals that switch off for reduced motion, interactive Plotly charts on white with boxed legends outside
+the plotting area and nothing drawn over the data, colour never used alone (marker shapes, line styles), and a
+sentence and a table behind every chart. Plot colours: Crameri's Davos colour map and Jack Baker's figure
 palette, checked with `tools/cvd_check.py`. See the Accessibility page in the app for details and known gaps.
 
 ## Running locally
@@ -60,4 +66,4 @@ streamlit run isoremoval.py
 python tests/test_calc.py
 ```
 
-Fonts: Atkinson Hyperlegible Next and Mono, © Braille Institute, SIL Open Font License (`static/fonts/OFL.txt`).
+Font: Open Sans, SIL Open Font License (`static/fonts/OFL.txt`).

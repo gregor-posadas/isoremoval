@@ -4,42 +4,47 @@ enableStaticServing = true
 [client]
 toolbarMode = "minimal"
 
+[browser]
+gatherUsageStats = false
+
 [theme]
-font = "Atkinson, 'Atkinson Hyperlegible Next', system-ui, sans-serif"
-codeFont = "'Atkinson Mono', ui-monospace, monospace"
+# Open Sans everywhere, served with the app (SIL Open Font License).
+font = "'Open Sans', system-ui, -apple-system, 'Segoe UI', sans-serif"
+headingFont = "'Open Sans', system-ui, -apple-system, 'Segoe UI', sans-serif"
+codeFont = "ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace"
 baseFontSize = 18
 baseFontWeight = 400
 headingFontWeights = [700, 700, 700, 700, 700, 700]
-headingFontSizes = ["2.5rem", "1.75rem", "1.3rem", "1.1rem", "1rem", "1rem"]
+headingFontSizes = ["2.5rem", "1.8rem", "1.35rem", "1.15rem", "1rem", "1rem"]
 baseRadius = "0.35rem"
 showWidgetBorder = true
 linkUnderline = true
 
 [[theme.fontFaces]]
-family = "Atkinson"
-url = "app/static/fonts/AtkinsonHyperlegibleNext-Regular.woff2"
+family = "Open Sans"
+url = "app/static/fonts/open-sans-latin-400-normal.woff2"
 weight = 400
 style = "normal"
 
 [[theme.fontFaces]]
-family = "Atkinson"
-url = "app/static/fonts/AtkinsonHyperlegibleNext-Bold.woff2"
+family = "Open Sans"
+url = "app/static/fonts/open-sans-latin-700-normal.woff2"
 weight = 700
 style = "normal"
 
 [[theme.fontFaces]]
-family = "Atkinson"
-url = "app/static/fonts/AtkinsonHyperlegibleNext-RegularItalic.woff2"
+family = "Open Sans"
+url = "app/static/fonts/open-sans-latin-400-italic.woff2"
 weight = 400
 style = "italic"
 
 [[theme.fontFaces]]
-family = "Atkinson Mono"
-url = "app/static/fonts/AtkinsonHyperlegibleMono-Regular.woff2"
-weight = 400
-style = "normal"
+family = "Open Sans"
+url = "app/static/fonts/open-sans-latin-700-italic.woff2"
+weight = 700
+style = "italic"
 
-# Light: warm paper, near-black ink. Borders are dark enough (3:1+) to see where each field is.
+# Light (the default on a first visit): warm paper, near-black ink.
 [theme.light]
 primaryColor = "#385F96"
 backgroundColor = "#f6f2e9"
@@ -60,7 +65,7 @@ yellowColor = "#8a6d00"
 backgroundColor = "#ece6d8"
 secondaryBackgroundColor = "#f6f2e9"
 
-# Dark: black paper, white ink, lighter partners of the same blues.
+# Dark: black paper, white ink. Switch in the menu at the top right, under Settings.
 [theme.dark]
 primaryColor = "#9EB8DB"
 backgroundColor = "#000000"

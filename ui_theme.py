@@ -1,48 +1,49 @@
-"""Look and accessibility settings shared by the CE 323 sedimentation tools.
+"""Look, behaviour and accessibility shared by the CE 323 sedimentation tools.
 
-Follows the same system as Gregor Posadas's other teaching sites:
-- Atkinson Hyperlegible Next (Braille Institute), 18 px reading text, two weights.
-- Warm paper in light mode, black in dark mode; the theme follows the device and
-  can be switched in the app menu (top right, Settings).
-- Figure colours from Jack Baker's "Choosing colors for figures" palette, and
-  Crameri's Davos colour map for ordered series (isoremoval curves). Every
-  series also has a marker shape and a direct label, so colour is never the
-  only cue; checked under simulated colour blindness with tools/cvd_check.py.
-- Visible 3 px focus outlines, 48 px targets, no motion when the device asks
-  for reduced motion.
+- Open Sans (served with the app), 18 px text.
+- Light mode on a first visit; the Light / Dark / System switch in Settings still works and is remembered.
+- Explainer terms, as on gregorposadas's website: a dotted underline marks a term with a short
+  explanation. Hover shows it; a click, tap, Enter or Space pins it; Escape or a click elsewhere closes it.
+- Gentle reveal: blocks below the fold fade up as they scroll into view (none for reduced motion).
+- Plots are interactive (Plotly) on white cards, with boxed legends outside the plotting area and no
+  labels drawn over data. Figure colours: Crameri's Davos for ordered series and Jack Baker's palette,
+  checked under simulated colour blindness (tools/cvd_check.py). Marker shapes repeat every cue in colour.
 """
+import html
 import os
-from contextlib import contextmanager
+from itertools import count
 
 import matplotlib
-import matplotlib.pyplot as plt
 from matplotlib import font_manager
+import numpy as np
 import streamlit as st
 
 matplotlib.use("Agg")
-
 HERE = os.path.dirname(os.path.abspath(__file__))
-for _f in ("AtkinsonHyperlegibleNext-Regular.ttf", "AtkinsonHyperlegibleNext-Bold.ttf"):
+for _f in ("open-sans-latin-400-normal.ttf", "open-sans-latin-700-normal.ttf", "open-sans-latin-400-italic.ttf"):
     _p = os.path.join(HERE, "static", "fonts", _f)
     if os.path.exists(_p):
         font_manager.fontManager.addfont(_p)
 
-# Baker palette (light) and its lighter partners for dark backgrounds
+FONT = "'Open Sans', system-ui, -apple-system, 'Segoe UI', sans-serif"
+INK, INK2, GRID, AXIS = "#1b1a17", "#4d4a43", "#e6e1d6", "#857e6e"
+BLUE, ORANGE, LIGHTBLUE, GOLD, MAROON = "#385F96", "#B8481A", "#9EB8DB", "#E7B800", "#800000"
+SYMBOLS = ["circle", "square", "diamond", "triangle-up", "triangle-down", "cross", "x", "star", "hexagon",
+           "pentagon", "triangle-left", "triangle-right", "hourglass", "bowtie", "star-diamond", "circle-x",
+           "square-x", "diamond-wide", "octagon"]
+MPL_MARKERS = ["o", "s", "D", "^", "v", "P", "X", "*", "h", "p", "<", ">", "o", "s", "D", "^", "v", "P", "X"]
+
 PALETTE = {
-    "light": {"blue": "#385F96", "orange": "#B8481A", "lightblue": "#9EB8DB", "gold": "#E7B800", "maroon": "#800000",
-              "paper": "#f6f2e9", "surface": "#fcfaf5", "ink": "#1b1a17", "ink2": "#4d4a43", "rule": "#d4ccbb",
-              "fill": "#9EB8DB", "focus": "#0072b2"},
-    "dark": {"blue": "#9EB8DB", "orange": "#ff8a4c", "lightblue": "#385F96", "gold": "#ffe27a", "maroon": "#e8a0a0",
-             "paper": "#000000", "surface": "#121212", "ink": "#ffffff", "ink2": "#c9c9c9", "rule": "#3d3d3d",
-             "fill": "#2A4F86", "focus": "#56b4e9"},
+    "light": {"paper": "#f6f2e9", "surface": "#fcfaf5", "sunk": "#ece6d8", "ink": INK, "ink2": INK2,
+              "rule": "#d4ccbb", "rule_strong": INK, "focus": "#0072b2"},
+    "dark": {"paper": "#000000", "surface": "#121212", "sunk": "#1c1c1c", "ink": "#ffffff", "ink2": "#c9c9c9",
+             "rule": "#3d3d3d", "rule_strong": "#ffffff", "focus": "#56b4e9"},
 }
-MARKERS = ["o", "s", "^", "D", "v", "P", "X", "*", "h", "<", ">", "p"]
 
 
 def theme_type():
     try:
-        t = st.context.theme.type
-        return "dark" if t == "dark" else "light"
+        return "dark" if st.context.theme.type == "dark" else "light"
     except Exception:
         return "light"
 
@@ -52,92 +53,232 @@ def colors():
 
 
 def curve_colors(n):
-    """n colours from Davos, ordered: darker = more removal in light mode, brighter in dark mode."""
+    """n ordered colours from Davos on a white plot: pale grey-green = little removal, deep blue = a lot."""
     try:
         import cmcrameri.cm as cmc
         cmap = cmc.davos
-    except Exception:          # fallback: matplotlib's perceptually even 'cividis'
+    except Exception:
+        import matplotlib.pyplot as plt
         cmap = plt.get_cmap("cividis")
-    import numpy as np
-    if theme_type() == "dark":
-        xs = np.linspace(0.34, 0.96, max(n, 2))
-    else:
-        xs = np.linspace(0.55, 0.0, max(n, 2))
-    return [matplotlib.colors.to_hex(cmap(x)) for x in xs[:n]]
+    xs = np.linspace(0.56, 0.02, max(n, 2))[:n] if n > 1 else [0.3]
+    return [matplotlib.colors.to_hex(cmap(x)) for x in xs]
 
 
-@contextmanager
-def figure_style():
-    c = colors()
-    rc = {
-        "font.family": ["Atkinson Hyperlegible Next", "DejaVu Sans"],
-        "font.size": 13,
-        "axes.titlesize": 15,
-        "axes.titleweight": "bold",
-        "axes.labelsize": 14,
-        "axes.labelweight": "bold",
-        "axes.edgecolor": c["ink"],
-        "axes.labelcolor": c["ink"],
-        "axes.facecolor": c["paper"],
-        "figure.facecolor": c["paper"],
-        "savefig.facecolor": c["paper"],
-        "text.color": c["ink"],
-        "xtick.color": c["ink"],
-        "ytick.color": c["ink"],
-        "grid.color": c["rule"],
-        "grid.linewidth": 0.8,
-        "legend.frameon": False,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "lines.linewidth": 2.4,
-        "lines.markersize": 7,
+# ---------------------------------------------------------------------------
+# Explainer terms
+# ---------------------------------------------------------------------------
+_ids = count(1)
+
+
+def term(text, definition, more=None):
+    """Inline HTML for a term with an explanation (use inside st.markdown(..., unsafe_allow_html=True))."""
+    i = next(_ids)
+    extra = (f' <a class="term__more" href="{more[1]}" target="_blank" rel="noopener">{html.escape(more[0])}'
+             f'<span class="sr"> (opens in a new tab)</span></a>') if more else ""
+    return (f'<span class="term"><button type="button" class="term__btn" aria-expanded="false" '
+            f'aria-controls="tt-{i}">{text}</button><span class="term__tip" id="tt-{i}" role="note" hidden>'
+            f'<span class="term__def">{definition}</span>{extra}</span></span>')
+
+
+def md(text):
+    st.markdown(text, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Page setup: CSS + one script (light default, explainer terms, reveal)
+# ---------------------------------------------------------------------------
+_JS = r"""
+<script>
+(function () {
+  /* 1. Light mode on a first visit. Streamlit remembers the Light / Dark / System choice per page. */
+  try {
+    if (!localStorage.getItem("ce323-theme-init")) {
+      localStorage.setItem("ce323-theme-init", "1");
+      ["/", "/accessibility"].forEach(function (p) {
+        localStorage.setItem("stActiveTheme-" + p + "-v2", JSON.stringify("Light"));
+      });
+      location.reload();
+      return;
     }
-    with plt.rc_context(rc):
-        yield c
+  } catch (e) {}
+
+  if (window.__ce323) return;   /* the listeners below only need adding once */
+  window.__ce323 = true;
+  var doc = document;
+
+  /* 2. Explainer terms (same behaviour as gregorposadas.github.io). */
+  var open = null, timer = null;
+  var hover = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  function tipOf(t) { return t.querySelector(".term__tip"); }
+  function btnOf(t) { return t.querySelector(".term__btn"); }
+  function place(t) {
+    var tip = tipOf(t), br = btnOf(t).getBoundingClientRect();
+    var vw = doc.documentElement.clientWidth, vh = window.innerHeight;
+    tip.style.position = "fixed"; tip.style.top = "0px"; tip.style.left = "0px";
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    var left = Math.min(Math.max(12, br.left), vw - 12 - w);
+    var top = br.bottom + 8;
+    if (top + h > vh - 12 && br.top - 8 - h >= 12) top = br.top - 8 - h;
+    tip.style.left = Math.max(12, left) + "px"; tip.style.top = top + "px";
+  }
+  function show(t, pin) {
+    if (open && open !== t) hide(open);
+    tipOf(t).hidden = false; btnOf(t).setAttribute("aria-expanded", "true");
+    if (pin) t.classList.add("is-pinned");
+    open = t; place(t);
+  }
+  function hide(t) {
+    if (!t || !t.isConnected) { open = null; return; }
+    tipOf(t).hidden = true; btnOf(t).setAttribute("aria-expanded", "false");
+    t.classList.remove("is-pinned"); if (open === t) open = null;
+  }
+  doc.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest(".term__btn");
+    if (b) {
+      var t = b.closest(".term");
+      if (open === t && t.classList.contains("is-pinned")) hide(t); else show(t, true);
+      return;
+    }
+    if (open && !open.contains(e.target)) hide(open);
+  });
+  if (hover) {
+    doc.addEventListener("mouseover", function (e) {
+      var t = e.target.closest && e.target.closest(".term");
+      if (!t) return;
+      clearTimeout(timer);
+      timer = setTimeout(function () { if (open !== t) show(t, false); }, 120);
+    });
+    doc.addEventListener("mouseout", function (e) {
+      var t = e.target.closest && e.target.closest(".term");
+      if (!t || (e.relatedTarget && t.contains(e.relatedTarget))) return;
+      clearTimeout(timer);
+      if (!t.classList.contains("is-pinned"))
+        timer = setTimeout(function () { if (open === t && !t.classList.contains("is-pinned")) hide(t); }, 300);
+    });
+  }
+  doc.addEventListener("focusout", function (e) {
+    if (open && e.relatedTarget && !open.contains(e.relatedTarget)) hide(open);
+  });
+  doc.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && open) { var b = btnOf(open); hide(open); b.focus(); }
+  });
+  window.addEventListener("resize", function () { if (open) place(open); });
+  doc.addEventListener("scroll", function () { if (open) place(open); }, { passive: true, capture: true });
+
+  /* 3. Gentle reveal: blocks below the fold fade up as they scroll into view.
+     Nothing is hidden for reduced motion, without IntersectionObserver, or when printing. */
+  if (!("IntersectionObserver" in window)) return;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  doc.documentElement.classList.add("rv-on");
+  function done(el) { el.classList.remove("rv", "rv-in"); el.style.removeProperty("--rv-d"); }
+  function reveal(el, delay) {
+    if (!el.classList.contains("rv") || el.classList.contains("rv-in")) return;
+    if (delay) el.style.setProperty("--rv-d", delay + "ms");
+    el.classList.add("rv-in");
+    setTimeout(function () { done(el); }, 900 + (delay || 0));
+  }
+  var io = new IntersectionObserver(function (es) {
+    var n = 0;
+    es.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      io.unobserve(e.target);
+      reveal(e.target, Math.min(n++, 4) * 70);
+    });
+  }, { rootMargin: "0px 0px -6% 0px", threshold: 0 });
+  function scan() {
+    var root = doc.querySelector('[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"]');
+    if (!root) return;
+    var vh = window.innerHeight;
+    Array.prototype.forEach.call(root.children, function (el) {
+      if (el.dataset.rvSeen) return;
+      el.dataset.rvSeen = "1";
+      if (el.getBoundingClientRect().top < vh * 0.92) return;   /* on screen already: no effect */
+      el.classList.add("rv");
+      io.observe(el);
+    });
+  }
+  scan();
+  new MutationObserver(function () { scan(); }).observe(doc.body, { childList: true, subtree: true });
+  doc.addEventListener("focusin", function (e) {
+    var el = e.target.closest && e.target.closest(".rv");
+    if (el) { io.unobserve(el); reveal(el, 0); }
+  });
+  window.addEventListener("beforeprint", function () {
+    Array.prototype.forEach.call(doc.querySelectorAll(".rv"), done);
+  });
+})();
+</script>
+"""
 
 
-def inject_css():
+def setup_page():
     c = colors()
     st.markdown(
         f"""
 <style>
-:root {{ --focus: {c['focus']}; --ink2: {c['ink2']}; --rule: {c['rule']}; }}
-/* Reading width and rhythm */
+:root {{ --focus: {c['focus']}; --ink2: {c['ink2']}; --rule: {c['rule']}; --sunk: {c['sunk']};
+        --surface: {c['surface']}; --ink: {c['ink']}; --rule-strong: {c['rule_strong']}; }}
 .block-container {{ max-width: 1080px; padding-top: 2.5rem; }}
-[data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li,
-[data-testid="stCaptionContainer"] {{ max-width: 70ch; line-height: 1.55; }}
-h1, h2, h3 {{ letter-spacing: -0.01em; }}
-/* Visible focus for keyboard users */
-*:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible,
-[role="radio"]:focus-visible, [role="checkbox"]:focus-visible, [role="tab"]:focus-visible,
-[data-baseweb="select"] *:focus-visible {{
+[data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li {{ max-width: 72ch; line-height: 1.6; }}
+[data-testid="stCaptionContainer"] p {{ max-width: 72ch; line-height: 1.5; }}
+h1, h2, h3 {{ letter-spacing: -0.005em; }}
+/* focus that keyboard users can see */
+*:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, [role="radio"]:focus-visible,
+[role="checkbox"]:focus-visible, [role="tab"]:focus-visible {{
   outline: 3px solid var(--focus) !important; outline-offset: 2px !important; box-shadow: none !important; }}
-/* Comfortable targets */
-.stButton button, .stDownloadButton button, [data-testid="stBaseButton-secondary"],
-[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-pills"],
-[data-testid="stBaseButton-pillsActive"] {{ min-height: 48px; padding-left: 1rem; padding-right: 1rem; }}
+/* comfortable targets */
+.stButton button, .stDownloadButton button, .stLinkButton a, [data-testid="stBaseButton-secondary"],
+[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-pills"], [data-testid="stBaseButton-pillsActive"],
+[data-testid="stBaseButton-segmented_control"], [data-testid="stBaseButton-segmented_controlActive"] {{
+  min-height: 48px; padding-left: 1rem; padding-right: 1rem; }}
 [data-testid="stNumberInput"] input, [data-testid="stTextInput"] input {{ min-height: 46px; }}
 [data-baseweb="select"] > div {{ min-height: 48px; }}
 [data-testid="stExpander"] summary {{ min-height: 48px; }}
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] a {{ display: inline-block; padding: 6px 0; }}
-/* Links look like links */
-[data-testid="stMarkdownContainer"] a {{ text-decoration: underline; text-underline-offset: 3px;
-  text-decoration-thickness: 2px; }}
-/* Step labels */
-.step-kicker {{ font-size: 0.9rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+[data-testid="stMarkdownContainer"] a {{ text-underline-offset: 3px; text-decoration-thickness: 2px; }}
+/* step labels */
+.step-kicker {{ font-size: 0.9rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--ink2); margin-bottom: -0.6rem; }}
-.figure-desc {{ max-width: 70ch; color: inherit; }}
+.lede {{ font-size: 1.12rem; }}
+/* "the idea" callouts */
+.idea {{ border-left: 6px solid var(--rule-strong); background: var(--sunk); padding: 14px 18px; margin: 4px 0 14px;
+  max-width: 72ch; }}
+.idea p {{ margin: 0 0 8px; }} .idea p:last-child {{ margin-bottom: 0; }}
+.idea__k {{ font-size: 0.82rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink2);
+  display: block; margin-bottom: 4px; }}
+/* plots sit on white cards in both themes */
+[data-testid="stPlotlyChart"] {{ background: #ffffff; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }}
+.figure-desc {{ max-width: 72ch; }}
+.sr {{ position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }}
 .skip-link {{ position: absolute; left: -9999px; }}
 .skip-link:focus {{ position: static; display: inline-block; padding: 8px 12px; outline: 3px solid var(--focus); }}
-/* Respect reduced motion */
+/* explainer terms */
+.term {{ position: relative; }}
+.term__btn {{ font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: help;
+  text-decoration: underline dotted; text-decoration-thickness: 2px; text-underline-offset: 3px;
+  -webkit-tap-highlight-color: transparent; }}
+.term__btn:hover, .term__btn[aria-expanded="true"] {{ background: var(--sunk); text-decoration-style: solid; }}
+.term__tip {{ position: absolute; left: 0; top: calc(100% + 8px); z-index: 1000; display: block; width: max-content;
+  max-width: min(26rem, calc(100vw - 32px)); padding: 12px 14px; background: var(--surface); color: var(--ink);
+  border: 2px solid var(--rule-strong); box-shadow: 4px 4px 0 0 var(--rule-strong); font-size: 0.92rem;
+  font-weight: 400; line-height: 1.5; white-space: normal; text-align: left; }}
+.term__tip[hidden] {{ display: none; }}
+.term__def {{ display: block; }}
+.term__more {{ display: inline-block; margin-top: 6px; font-weight: 700; color: var(--ink); }}
+/* reveal */
+.rv-on .rv {{ opacity: 0; transform: translateY(14px); }}
+.rv-on .rv.rv-in {{ opacity: 1; transform: none; transition: opacity 600ms cubic-bezier(.2,.6,.2,1),
+  transform 600ms cubic-bezier(.2,.6,.2,1); transition-delay: var(--rv-d, 0ms); }}
+@media print {{ .rv-on .rv {{ opacity: 1 !important; transform: none !important; }} .term__tip {{ display: none !important; }} }}
 @media (prefers-reduced-motion: reduce) {{
-  *, *::before, *::after {{ animation-duration: 0.001ms !important; animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important; scroll-behavior: auto !important; }}
-}}
+  .rv-on .rv {{ opacity: 1; transform: none; transition: none; }}
+  *, *::before, *::after {{ animation-duration: 0.001ms !important; transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important; }} }}
 </style>
 """,
         unsafe_allow_html=True,
     )
+    st.html(_JS, unsafe_allow_javascript=True)
 
 
 def step_header(number, title, anchor):
@@ -145,6 +286,59 @@ def step_header(number, title, anchor):
     st.header(title, anchor=anchor)
 
 
+def idea(label, body_html):
+    """A highlighted 'the idea' box (HTML body, may contain terms)."""
+    md(f'<div class="idea"><span class="idea__k">{label}</span>{body_html}</div>')
+
+
 def figure_description(text):
-    """A sentence that says what a figure shows, read before the figure itself."""
-    st.markdown(f'<p class="figure-desc">{text}</p>', unsafe_allow_html=True)
+    md(f'<p class="figure-desc">{text}</p>')
+
+
+# ---------------------------------------------------------------------------
+# Plotly styling
+# ---------------------------------------------------------------------------
+PLOT_CONFIG = {
+    "displaylogo": False,
+    "responsive": True,
+    "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
+    "toImageButtonOptions": {"format": "png", "scale": 3},
+}
+
+
+def plot_config(filename):
+    cfg = dict(PLOT_CONFIG)
+    cfg["toImageButtonOptions"] = dict(PLOT_CONFIG["toImageButtonOptions"], filename=filename)
+    return cfg
+
+
+def style_axes(fig, **kw):
+    ax = dict(automargin=True, showline=True, linecolor=AXIS, linewidth=1.2, ticks="outside", tickcolor=AXIS, ticklen=6,
+              gridcolor=GRID, zeroline=False, title_font=dict(size=16, color=INK), tickfont=dict(size=14, color=INK),
+              mirror=False)
+    ax.update(kw)
+    return ax
+
+
+def base_layout(fig, height, legend_title=None, legend_rows=1, top=24, n_items=None, per_row=4):
+    """White plot, Open Sans, boxed legend centred below the plotting area (never on top of data).
+
+    The bottom margin is sized for the x-axis (ticks + title, about 72 px), the legend box and a 22 px gap
+    between them, so Plotly never has to push the plot up and the legend never touches the axis title.
+    """
+    if n_items is not None:
+        legend_rows = -(-n_items // per_row)
+    legend_h = (30 if legend_title else 8) + 27 * legend_rows + 10
+    bottom = 72 + 22 + legend_h + 12
+    fig.update_layout(
+        template="none", height=height + bottom, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(family=FONT, size=15, color=INK),
+        margin=dict(l=16, r=16, t=top, b=bottom),
+        hoverlabel=dict(bgcolor="#ffffff", bordercolor=INK, font=dict(family=FONT, size=15, color=INK)),
+        legend=dict(orientation="h", yref="container", y=12 / (height + bottom), yanchor="bottom", xanchor="center",
+                    x=0.5, bgcolor="#ffffff", bordercolor=INK, borderwidth=1, font=dict(size=14),
+                    title=dict(text=legend_title, side="top center") if legend_title else None,
+                    itemclick="toggle", itemdoubleclick="toggleothers", tracegroupgap=6),
+        clickmode="event+select", dragmode="zoom", hovermode="closest",
+    )
+    return fig

@@ -25,17 +25,17 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import numpy as np, matplotlib.colors as mc
 import cmcrameri.cm as cmc
-def davos(n, dark):
-    xs = np.linspace(0.34, 0.96, n) if dark else np.linspace(0.55, 0.0, n)
+def davos(n):
+    """The curve colours the app uses (ui_theme.curve_colors), on the white plot background."""
+    xs = np.linspace(0.56, 0.02, n)
     return {f'curve {i+1}': mc.to_hex(cmc.davos(x)) for i, x in enumerate(xs)}
 
 SETS = {
-  'curves (7), light': ('#f6f2e9', davos(7, False)),
-  'curves (7), dark': ('#000000', davos(7, True)),
-  'design plots, light': ('#f6f2e9', {'overflow (orange)': '#B8481A', 'detention (blue)': '#385F96', 'ink': '#1b1a17'}),
-  'design plots, dark': ('#000000', {'overflow (orange)': '#ff8a4c', 'detention (blue)': '#9EB8DB', 'ink': '#ffffff'}),
-  'basin drawings, light': ('#f6f2e9', {'water': '#9EB8DB', 'sludge': '#800000', 'inlet': '#385F96', 'weir': '#B8481A', 'ink': '#1b1a17'}),
-  'basin drawings, dark': ('#000000', {'water': '#2A4F86', 'sludge': '#e8a0a0', 'inlet': '#9EB8DB', 'weir': '#ff8a4c', 'ink': '#ffffff'}),
+  'curves (7), white plot': ('#ffffff', davos(7)),
+  'design plots, white': ('#ffffff', {'connecting line': '#857e6e', 'target star (with ink outline)': '#E7B800', 'ink': '#1b1a17'}),
+  'basin side view, white': ('#ffffff', {'water': '#dbe6f3', 'sludge': '#8c6b5a', 'path at overflow rate': '#385F96',
+                                         'test path': '#B8481A', 'ink': '#1b1a17'}),
+  'paths on water': ('#dbe6f3', {'path at overflow rate': '#385F96', 'test path': '#B8481A'}),
 }
 # Neighbouring curves differ by little on purpose: they are ordered (Davos) and each carries its own
 # marker and a direct label, so only non-adjacent pairs need to separate by colour alone.

@@ -1,32 +1,69 @@
-"""Pages for the isoremoval app: the tool itself and the accessibility notes."""
+"""Pages for the isoremoval app: the tool (with its teaching text) and the accessibility notes."""
 from io import BytesIO
 
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 import iso_calc as ic
 import ui_theme as ui
+from ui_theme import term, md
 
-# Links shown to students. Leave a value empty to hide that link.
-BASIN_TOOL_URL = "https://github.com/gregor-posadas/Sedimentation-Basin-Generator"
-# The deployed basin app (https://....streamlit.app). When set, Step 4 shows a button that opens it with the
-# student's overflow rate, detention time and target already filled in.
-BASIN_APP_URL = "https://sedimentationbasindesign.streamlit.app"
+BASIN_APP_URL = "https://sedimentationbasindesign.streamlit.app/"
 WALKTHROUGH_URL = ""   # paste the walkthrough video link here once it's posted
 
 UNIT_NAMES = {"m": "meters (m)", "ft": "feet (ft)", "cm": "centimeters (cm)", "in": "inches (in)"}
-MEASURES = {
-    "Turbidity (NTU)": ("turbidity", "NTU"),
-    "Suspended solids (mg/L)": ("suspended solids", "mg/L"),
-}
+MEASURES = {"Turbidity (NTU)": ("turbidity", "NTU"), "Suspended solids (mg/L)": ("suspended solids", "mg/L")}
 CLEANUPS = {
-    "none": "Use readings as measured",
+    "none": "Use the readings exactly as measured",
     "monotone": "Even out readings that go up over time (recommended for noisy data)",
     "gaussian": "Smooth each port's readings (the original app's method)",
 }
+
+# ---------------------------------------------------------------------------
+# Explainer terms (definitions written for someone meeting these ideas for the first time)
+# ---------------------------------------------------------------------------
+D = {
+    "column": "A tall, clear tube (in CE 323, 2.5 m) filled with the water you want to treat. It is mixed, then "
+              "left perfectly still so the particles can settle, and sampled at several depths over time.",
+    "port": "A small tap on the side of the column at a known depth. Opening it draws a sample from that depth.",
+    "turbidity": "How cloudy the water is, measured by how much light the particles scatter. Reported in NTU "
+                 "(nephelometric turbidity units). More particles, higher NTU.",
+    "tss": "Total suspended solids: the mass of particles caught on a filter from a known volume of water, "
+           "in mg/L.",
+    "c0": "The starting concentration: the reading of the well-mixed water at time zero, before any settling. "
+          "Every percent removal is measured against it.",
+    "removal": "How much of the starting concentration is gone from that spot: (C₀ − reading) ÷ C₀ × 100. "
+               "30 % removal at 0.5 m means 30 % of the particles that started there have sunk below it.",
+    "iso": "A line joining every time and depth that share one percent removal. The 50 % curve shows where, at "
+           "each moment, exactly half of the particles have settled out. Also called an isoconcentration curve "
+           "(\"iso\" means equal).",
+    "interp": "Estimating a value between two known ones by drawing a straight line between them. If removal "
+              "is 50 % at 0.5 m and 35 % at 1.0 m, then 40 % is about two-thirds of the way down, near 0.83 m.",
+    "extrap": "Estimating beyond the data by continuing a line past the last known point. Useful, but less "
+              "certain the farther you go.",
+    "discrete": "Settling where each particle keeps its size and speed, so it falls in a straight line. Sand "
+                "grains behave this way.",
+    "floc": "Settling where particles bump into each other and stick, so they grow and speed up as they fall. "
+            "Alum flocs behave this way, which is why a column test is needed.",
+    "detention": "How long water stays in the basin: basin volume ÷ flow. In the column, it is the time a curve "
+                 "takes to reach the bottom.",
+    "overflow": "The flow divided by the basin's surface area (Q ÷ A), in m/d. It is also the settling speed a "
+                "particle needs to reach the bottom before the water leaves. Also called the surface loading rate.",
+    "overall": "The share of all the particles in the whole column that have settled out by a given time: the "
+               "average of the removal over the full depth.",
+    "trapezoid": "A way to find the area under a line made of straight pieces: split it into strips, and for each "
+                 "strip multiply its average height by its width, then add them up.",
+    "strat": "How different the top and bottom of the column are. A good test ends with clearly cleaner water "
+             "near the top than near the bottom.",
+    "h": "The depth you analyse to, usually the deepest port. Detention time and overflow rate both depend on it.",
+}
+
+
+def T(text, key):
+    return term(text, D[key])
 
 
 # ---------------------------------------------------------------------------
@@ -43,20 +80,7 @@ def _template_csv():
 
 
 def _read_upload(file):
-    name = file.name.lower()
-    if name.endswith((".xlsx", ".xls")):
-        return pd.read_excel(file)
-    return pd.read_csv(file)
-
-
-def _png(fig):
-    buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
-    return buf.getvalue()
-
-
-def _fmt(x, nd=2):
-    return f"{x:,.{nd}f}"
+    return pd.read_excel(file) if file.name.lower().endswith((".xlsx", ".xls")) else pd.read_csv(file)
 
 
 @st.cache_data(show_spinner=False)
@@ -72,163 +96,255 @@ def _compute(depths, times, conc, c0, H, cleanup, sigma, monotone, percents, uni
     return used, rd, cv, cv.design_table(unit), cv.depth_table()
 
 
+def curve_points(cv, p):
+    """Points to draw for curve p: measured part (every 5 min and at each reading) and the dotted extension."""
+    times = np.unique(np.concatenate([np.arange(0, cv.t_last + 1e-9, 5.0), cv.times]))
+    t_b, extrap = cv.time_to_bottom(p)
+    ts, zs = [], []
+    for t in times:
+        if t_b is not None and not extrap and t >= t_b:
+            break
+        z = cv.depth_at(p, t)
+        if not np.isfinite(z) or z >= cv.H:
+            break
+        ts.append(float(t)); zs.append(float(z))
+    ext = None
+    if t_b is not None and not extrap:
+        ts.append(t_b); zs.append(cv.H)
+    elif t_b is not None and ts:
+        ext = ([ts[-1], t_b], [zs[-1], cv.H])
+    return ts, zs, ext, t_b, extrap
+
+
+def _sel_points(key):
+    try:
+        return st.session_state[key]["selection"]["points"]
+    except Exception:
+        return []
+
+
+def _new_selection(key):
+    """The clicked point if the selection changed since we last acted on it, else None."""
+    pts = _sel_points(key)
+    sig = repr([(p.get("curve_number"), p.get("point_index")) for p in pts])
+    if st.session_state.get(f"_{key}_sig") == sig:
+        return None
+    st.session_state[f"_{key}_sig"] = sig
+    return pts[0] if pts else None
+
+
 # ---------------------------------------------------------------------------
 # Figures
 # ---------------------------------------------------------------------------
-def curves_figure(cv, percents, unit, measure_unit):
+def curves_figure(cv, percents, unit, follow=None):
     cols = ui.curve_colors(len(percents))
-    with ui.figure_style() as c:
-        fig, ax = plt.subplots(figsize=(10.5, 6.2))
-        ends = []
-        far = []
-        xmax_view = cv.t_last * 1.15
-        for p, col, mk in zip(percents, cols, ui.MARKERS * 3):
-            pts = cv.draw_points(p)
-            if pts is None:
-                continue
-            t_m, z_m, ext = pts
-            mark = [i for i, t in enumerate(t_m) if np.isclose(t, cv.times).any()]
-            ax.plot(t_m, z_m, color=col, marker=mk, markevery=mark, markersize=7, markeredgecolor=c["paper"],
-                    markeredgewidth=0.8, solid_capstyle="round", zorder=3)
-            if ext is not None:
-                ax.plot(ext[0], ext[1], color=col, linestyle=(0, (1.2, 2.2)), linewidth=2.2, zorder=2)
-                end_t, end_z = ext[0][-1], ext[1][-1]
+    fig = go.Figure()
+    trace_map = []
+    xmax = cv.t_last * 1.12
+    far = []
+    for p, col, sym in zip(percents, cols, ui.SYMBOLS):
+        ts, zs, ext, t_b, extrap = curve_points(cv, p)
+        if not ts:
+            continue
+        dim = follow is not None and p != follow
+        op = 0.22 if dim else 1.0
+        width = 4.5 if p == follow else 2.6
+        fig.add_trace(go.Scatter(
+            x=ts, y=zs, mode="lines+markers", name=f"{p} %", legendgroup=str(p),
+            line=dict(color=col, width=width), opacity=op,
+            marker=dict(symbol=sym, size=9 if p == follow else 7, color=col, line=dict(color="#ffffff", width=1)),
+            customdata=[p] * len(ts),
+            hovertemplate=f"<b>{p} % removal curve</b><br>Time: %{{x:.1f}} min<br>Depth: %{{y:.2f}} {unit}<extra></extra>",
+            selected=dict(marker=dict(size=14)), unselected=dict(marker=dict(opacity=op)),
+        ))
+        trace_map.append(p)
+        if ext is not None:
+            fig.add_trace(go.Scatter(
+                x=ext[0], y=ext[1], mode="lines+markers", legendgroup=str(p), showlegend=False,
+                line=dict(color=col, width=width, dash="dot"), opacity=op,
+                marker=dict(symbol=[sym, sym + "-open"], size=[0.1, 10], color=col, line=dict(color=col, width=2)),
+                customdata=[p, p],
+                hovertemplate=(f"<b>{p} % curve, extended past your data</b><br>Reaches the bottom at about "
+                               f"%{{x:.0f}} min<extra></extra>"),
+                selected=dict(marker=dict(size=14)), unselected=dict(marker=dict(opacity=op)),
+            ))
+            trace_map.append(p)
+        if t_b is not None:
+            if t_b > 3 * cv.t_last:
+                far.append((p, t_b))
             else:
-                end_t, end_z = t_m[-1], z_m[-1]
-            if end_t > 3 * cv.t_last:
-                far.append((p, end_t, ext))
-            else:
-                xmax_view = max(xmax_view, end_t * 1.06)
-                ends.append((end_t, end_z, p, col))
-        for p, end_t, ext in far:   # label curves that leave the right edge where they leave it
-            col = cols[percents.index(p)]
-            x_edge = xmax_view * 0.985
-            z_edge = float(np.interp(x_edge, ext[0], ext[1]))
-            ends.append((x_edge, z_edge, p, col))
-        far = [(p, t) for p, t, _ in far]
-        # direct labels, nudged apart where they would overlap
-        ends.sort()
-        last_x = {}
-        for t_e, z_e, p, col in ends:
-            row = 0
-            while row in last_x and t_e - last_x[row] < 0.045 * xmax_view:
-                row += 1
-            last_x[row] = t_e
-            dy = -(0.045 + 0.055 * row) * cv.H if np.isclose(z_e, cv.H) else 0
-            ax.annotate(f"{p:g}%", (t_e, z_e), xytext=(t_e, z_e + dy), ha="center",
-                        va="bottom" if dy else "center", fontsize=12, fontweight="bold", color=col,
-                        bbox=dict(boxstyle="round,pad=0.15", fc=c["paper"], ec="none", alpha=0.85),
-                        arrowprops=None, zorder=5)
-        ax.axvline(cv.t_last, color=c["ink2"], linewidth=1.2, linestyle="--", zorder=1)
-        ax.text(cv.t_last, -0.02 * cv.H, f" last reading, {cv.t_last:g} min", color=c["ink2"], fontsize=11,
-                va="bottom", ha="left")
-        ax.set_xlim(0, xmax_view)
-        ax.set_ylim(cv.H, -0.06 * cv.H)
-        ax.set_xlabel("Time since the test started (min)")
-        ax.set_ylabel(f"Depth below the surface ({unit})")
-        ax.grid(True)
-        handles = [Line2D([0], [0], color=c["ink"], lw=2.4, marker="o", markevery=[1], label="From your readings"),
-                   Line2D([0], [0], color=c["ink"], lw=2.2, linestyle=(0, (1.2, 2.2)),
-                          label="Extended past the last reading")]
-        ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2, fontsize=12)
-        fig.tight_layout()
-    return fig, far
+                xmax = max(xmax, t_b * 1.05)
+    if follow is not None:
+        ts, zs, ext, t_b, extrap = curve_points(cv, follow)
+        if t_b is not None:
+            fig.add_trace(go.Scatter(
+                x=[0, t_b], y=[0, cv.H], mode="lines", showlegend=False,
+                line=dict(color=ui.INK2, width=2, dash="dash"), hoverinfo="skip"))
+            trace_map.append(follow)
+    fig.add_vline(x=cv.t_last, line=dict(color=ui.INK2, width=1.4, dash="dash"))
+    fig.add_annotation(x=cv.t_last, y=1.0, yref="paper", yanchor="bottom", text=f"last reading ({cv.t_last:g} min)",
+                       showarrow=False, font=dict(size=13, color=ui.INK2), xanchor="center")
+    ui.base_layout(fig, height=440, legend_title="Curves · click a name to hide it", n_items=len(percents), per_row=4,
+                   top=36)
+    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=12, title_text="Time since the test started (min)", range=[0, xmax]))
+    fig.update_yaxes(**ui.style_axes(fig, title_text=f"Depth below the water surface ({unit})",
+                                     range=[cv.H * 1.02, -0.04 * cv.H]))
+    return fig, trace_map, far
 
 
-def design_figure(df, x_col, x_label, color_key, marker, target=None, read=None):
-    with ui.figure_style() as c:
-        fig, ax = plt.subplots(figsize=(5.4, 4.3))
-        x, y = df[x_col].values, df["Overall removal (%)"].values
-        ext = (df["Extrapolated"] == "Yes").values
-        ax.plot(x, y, color=c[color_key], linewidth=2.4, zorder=2)
-        ax.plot(x[~ext], y[~ext], linestyle="none", marker=marker, markersize=9, color=c[color_key],
-                markeredgecolor=c["paper"], zorder=3, label="From your readings")
-        if ext.any():
-            ax.plot(x[ext], y[ext], linestyle="none", marker=marker, markersize=9, markerfacecolor=c["paper"],
-                    markeredgecolor=c[color_key], markeredgewidth=2, zorder=3, label="Extrapolated")
-        for xi, yi, p in zip(x, y, df["Curve (%)"].values):
-            ax.annotate(f"{p:g}%", (xi, yi), xytext=(6, -12), textcoords="offset points", fontsize=10,
-                        color=c["ink2"])
-        if target is not None and read is not None:
-            xr = read
-            ax.plot([ax.get_xlim()[0], xr], [target, target], color=c["ink"], lw=1.4, ls="--", zorder=4)
-            ax.plot([xr, xr], [ax.get_ylim()[0], target], color=c["ink"], lw=1.4, ls="--", zorder=4)
-            ax.annotate(f"{target:g}% → {xr:,.3g}", (xr, target), xytext=(10, -26), textcoords="offset points",
-                        fontsize=12, fontweight="bold", color=c["ink"],
-                        bbox=dict(boxstyle="round,pad=0.25", fc=c["paper"], ec=c["ink"], lw=1))
-        ax.set_xlabel(x_label)
-        ax.set_ylabel("Overall removal (%)")
-        ax.grid(True)
-        ax.legend(loc="best", fontsize=11)
-        fig.tight_layout()
+def design_figure(design, percents, target=None, read=None):
+    cols = dict(zip(percents, ui.curve_colors(len(percents))))
+    syms = dict(zip(percents, ui.SYMBOLS))
+    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.07,
+                        subplot_titles=("Overall removal vs. overflow rate", "Overall removal vs. detention time"))
+    pt_map = []
+    if target is not None and read is not None:
+        vo, th = read
+        for c, xv in [(1, vo), (2, th)]:
+            fig.add_shape(type="line", x0=0, x1=xv, y0=target, y1=target, line=dict(color=ui.INK, width=1.6, dash="dash"),
+                          row=1, col=c)
+            fig.add_shape(type="line", x0=xv, x1=xv, y0=0, y1=target, line=dict(color=ui.INK, width=1.6, dash="dash"),
+                          row=1, col=c)
+            fig.add_trace(go.Scatter(x=[xv], y=[target], mode="markers", name=f"Your target: {target:g} %",
+                                     showlegend=(c == 1), legendgroup="target",
+                                     marker=dict(symbol="star", size=15, color=ui.GOLD, line=dict(color=ui.INK, width=1.5)),
+                                     hovertemplate=(f"<b>Target {target:g} %</b><br>Overflow rate ≈ {vo:.1f} m/d<br>"
+                                                    f"Detention time ≈ {th:.2f} h<extra></extra>")), row=1, col=c)
+            pt_map.append(None)
+    for c, x in [(1, "Overflow rate (m/d)"), (2, "Detention time (h)")]:
+        d = design.sort_values(x)
+        fig.add_trace(go.Scatter(x=d[x], y=d["Overall removal (%)"], mode="lines", showlegend=False,
+                                 line=dict(color=ui.AXIS, width=2), hoverinfo="skip"), row=1, col=c)
+        pt_map.append(None)
+        for _, r in design.iterrows():
+            p = int(r["Curve (%)"])
+            ex = r["Extrapolated"] == "Yes"
+            fig.add_trace(go.Scatter(
+                x=[r[x]], y=[r["Overall removal (%)"]], mode="markers", name=f"{p} %", legendgroup=str(p),
+                showlegend=(c == 1),
+                marker=dict(symbol=syms[p] + ("-open" if ex else ""), size=13, color=cols[p],
+                            line=dict(color=cols[p] if ex else "#ffffff", width=2.5 if ex else 1)),
+                hovertemplate=(f"<b>{p} % curve</b>{' (extrapolated)' if ex else ''}<br>Overflow rate: "
+                               f"{r['Overflow rate (m/d)']:.1f} m/d<br>Detention time: {r['Detention time (h)']:.2f} h"
+                               f"<br>Overall removal: {r['Overall removal (%)']:.1f} %<extra></extra>"),
+                selected=dict(marker=dict(size=18)), unselected=dict(marker=dict(opacity=1)),
+            ), row=1, col=c)
+            pt_map.append(p)
+    n_leg = len(design) + (1 if target is not None and read is not None else 0)
+    ui.base_layout(fig, height=380, legend_title="One point per curve · click one", n_items=n_leg, per_row=4, top=56)
+    ylo = max(0, design["Overall removal (%)"].min() - 8)
+    fig.update_yaxes(**ui.style_axes(fig, range=[ylo, min(100, design["Overall removal (%)"].max() + 6)]))
+    fig.update_yaxes(title_text="Overall removal (%)", row=1, col=1)
+    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=12, rangemode="tozero"))
+    fig.update_xaxes(title_text="Overflow rate (m/d)", row=1, col=1)
+    fig.update_xaxes(title_text="Detention time (h)", row=1, col=2)
+    for a in fig.layout.annotations:
+        a.font = dict(size=16, color=ui.INK, family=ui.FONT)
+    return fig, pt_map
+
+
+def profile_figure(z, r, unit, H, bands):
+    fig = go.Figure()
+    fills = ["#c9d8ec", "#a9c1e0"]
+    for i, (z0, z1) in enumerate(bands):
+        m = (z >= z0 - 1e-9) & (z <= z1 + 1e-9)
+        zz = np.concatenate([[z0], z[m], [z1]])
+        rr = np.concatenate([[np.interp(z0, z, r)], r[m], [np.interp(z1, z, r)]])
+        area = float(np.trapezoid(rr, zz))
+        fig.add_trace(go.Scatter(
+            x=np.concatenate([rr, [0, 0]]), y=np.concatenate([zz, [z1, z0]]), fill="toself", mode="lines",
+            line=dict(width=1.5, color="#ffffff"), fillcolor=fills[i % 2], showlegend=(i == 0),
+            name="Strips of the shaded area",
+            hovertemplate=f"<b>Strip {z0:g}–{z1:g} {unit}</b><br>Area: {area:.1f} %·{unit}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=r, y=z, mode="lines+markers" if len(z) <= 14 else "lines", name="Removal at each depth",
+                             line=dict(color=ui.BLUE, width=3), marker=dict(size=9, color=ui.BLUE, line=dict(color="#fff", width=1)),
+                             hovertemplate=f"Depth %{{y:.2f}} {unit}<br>Removal %{{x:.1f}} %<extra></extra>"))
+    ui.base_layout(fig, height=360, n_items=2, per_row=1)
+    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=12, title_text="Percent removal at that moment (%)", range=[0, 105]))
+    fig.update_yaxes(**ui.style_axes(fig, title_text=f"Depth ({unit})", range=[H * 1.02, 0]))
     return fig
 
 
-def profile_figure(z, r, unit):
-    with ui.figure_style() as c:
-        fig, ax = plt.subplots(figsize=(5.0, 4.3))
-        ax.fill_betweenx(z, 0, r, color=c["fill"], alpha=0.55, linewidth=0)
-        ax.plot(r, z, color=c["blue"], marker="o" if len(z) <= 12 else None, markersize=7,
-                markeredgecolor=c["paper"], linewidth=2.4)
-        ax.set_ylim(z.max(), 0)
-        ax.set_xlim(0, 105)
-        ax.set_xlabel("Removal (%)")
-        ax.set_ylabel(f"Depth ({unit})")
-        area = np.trapezoid(r, z)
-        ax.text(r.min() * 0.45, z.max() * 0.5, f"shaded area\n= {area:.1f} %·{unit}", ha="center", va="center",
-                fontsize=12, fontweight="bold", color=c["ink"])
-        ax.grid(True)
-        fig.tight_layout()
-    return fig
+def _bands(z, H, depths):
+    edges = np.unique(np.concatenate([[0.0], depths[depths < H], [H]]))
+    return list(zip(edges[:-1], edges[1:]))
 
 
 # ---------------------------------------------------------------------------
-# The tool
+# Sidebar
 # ---------------------------------------------------------------------------
 def _sidebar():
     with st.sidebar:
         st.markdown('<a class="skip-link" href="#step-1">Skip to the tool</a>', unsafe_allow_html=True)
         st.markdown("### On this page")
         st.markdown(
-            "1. [Load your data](#step-1)\n"
+            "0. [New here? The idea](#the-idea)\n"
+            "1. [Load your readings](#step-1)\n"
             "2. [Describe your test](#step-2)\n"
-            "3. [Isoremoval curves](#step-3)\n"
-            "4. [Design values](#step-4)"
+            "3. [Percent removal](#step-3)\n"
+            "4. [Isoremoval curves](#step-4)\n"
+            "5. [Curves to design values](#step-5)\n"
+            "6. [Read your design values](#step-6)"
         )
         if WALKTHROUGH_URL:
             st.markdown(f"[Watch the walkthrough video]({WALKTHROUGH_URL})")
-        if BASIN_APP_URL or BASIN_TOOL_URL:
-            st.markdown("### Next")
-            st.markdown(f"Take your design values to the [Sedimentation Basin Design tool]"
-                        f"({BASIN_APP_URL or BASIN_TOOL_URL}).")
+        st.markdown("### Next")
+        st.markdown(f"Take your design values to the [Sedimentation Basin Design tool]({BASIN_APP_URL}).")
         st.markdown("### Display")
-        st.caption("Light or dark follows your device. To change it, open the menu at the top right, then Settings.")
+        st.caption("Opens in light mode. To switch to dark, open the menu at the top right, then Settings. "
+                   "Dotted-underlined words explain themselves: hover, tap, or press Enter on them.")
         st.caption("Built for CE 323 Environmental and Fluids Laboratory, Boise State University. "
                    "For learning; not certified for engineering design.")
 
 
+# ---------------------------------------------------------------------------
+# The tool
+# ---------------------------------------------------------------------------
 def tool_page():
-    ui.inject_css()
+    ui.setup_page()
     _sidebar()
 
     st.title("Isoremoval curves")
-    st.markdown(
-        "Turn your settling-column readings into isoremoval curves, then into the two plots you need to design "
-        "a sedimentation basin: **overall removal vs. overflow rate** and **overall removal vs. detention time**."
-    )
-    st.markdown(
-        "**How it works:** 1 load your readings → 2 describe the test → 3 check the curves → "
-        "4 read your design values."
-    )
+    md(f'<p class="lede">This tool turns the readings from your {T("settling column", "column")} test into '
+       f'{T("isoremoval curves", "iso")}, and then into the two numbers you need to design a sedimentation basin: '
+       f'an {T("overflow rate", "overflow")} and a {T("detention time", "detention")}. Each step explains what it is '
+       f'doing and why, so you can learn the method as you use it.</p>')
+
+    # ---------------- The idea ----------------
+    st.header("New here? The idea in five minutes", anchor="the-idea")
+    with st.expander("Read this first if you haven't met isoremoval curves before", expanded=True):
+        md(f"""
+<p><b>The problem.</b> A sedimentation basin is a big, slow tank. Water flows in at one end and out at the other,
+and while it crosses, particles sink to the bottom. To size the tank you need to know how fast your particles
+sink. You can't calculate that for real water: alum flocs come in every size, and they
+{T("stick together and speed up as they fall", "floc")}. So you measure it.</p>
+<p><b>The test.</b> Fill a {T("settling column", "column")} with the water, mix it, and let it stand.
+At set times (here 10, 20, 35, 50, 70 and 85 minutes) take a small sample from each {T("port", "port")} and
+measure its {T("turbidity", "turbidity")} or {T("suspended solids", "tss")}. As particles sink, readings fall,
+first near the top and later deeper down.</p>
+<p><b>Percent removal.</b> Compare each reading with the starting value {T("C₀", "c0")}:
+removal = (C₀ − reading) ÷ C₀ × 100. If C₀ = 20 mg/L and a port reads 14 mg/L, 30 % of the particles that were at
+that depth have sunk past it.</p>
+<p><b>Isoremoval curves.</b> Mark on a depth-versus-time chart every place where removal is, say, exactly 50 %,
+and join the marks. That line is the 50 % {T("isoremoval curve", "iso")}. It starts at the surface and moves down
+as time passes, because more and more particles get out of the way.</p>
+<p><b>From curves to a basin.</b> When a curve reaches the bottom of the column, its time is a
+{T("detention time", "detention")}, and column depth ÷ that time is an {T("overflow rate", "overflow")}. Averaging
+removal over the whole depth at that moment gives the {T("overall removal", "overall")}. Do this for each curve and
+you get two design plots: overall removal against overflow rate (which sets the basin's surface area) and against
+detention time (which sets its volume).</p>
+<p>The steps below do each of these for your data. Words with a dotted underline explain themselves.</p>
+""")
 
     # ---------------- Step 1 ----------------
-    ui.step_header(1, "Load your data", "step-1")
+    ui.step_header(1, "Load your readings", "step-1")
+    md("Upload the table of readings from your settling-column test, or start with the sample data from the lecture "
+       "to see how everything works.")
     left, right = st.columns([3, 2], gap="large")
     with left:
         upload = st.file_uploader(
             "Settling-column readings (Excel or CSV)", type=["xlsx", "xls", "csv"],
-            help="First column: port depths. Column headings: sampling times in minutes. Cells: your readings.",
-        )
+            help="First column: port depths. Column headings: sampling times in minutes. Cells: your readings.")
     with right:
         st.markdown("**No file yet?**")
         if st.button("Use the lecture's sample data", icon=":material/table_view:", use_container_width=True):
@@ -237,15 +353,12 @@ def tool_page():
                            icon=":material/download:", use_container_width=True)
         st.download_button("Download the CSV template", _template_csv(), "isoremoval_template.csv",
                            icon=":material/download:", use_container_width=True)
-
     with st.expander("How to lay out your file"):
-        st.markdown(
-            "- **First column:** the depth of each sampling port below the water surface (one row per port).\n"
-            "- **Other column headings:** the sampling times, in minutes after the test started "
-            "(10, 20, 35 … ; \"10 min\" also works).\n"
-            "- **Cells:** what you measured at that port and time, in one unit (NTU or mg/L).\n"
-            "- Don't include the starting reading (C₀) as a column; you'll enter it in Step 2."
-        )
+        md(f"- **First column:** the depth of each {T('port', 'port')} below the water surface, one row per port.\n"
+           "- **The other column headings:** the sampling times, in minutes after the test started "
+           "(10, 20, 35 …; \"10 min\" also works).\n"
+           "- **Each cell:** what you measured at that port and time, all in one unit (NTU or mg/L).\n"
+           f"- Leave out the starting reading {T('C₀', 'c0')}; you'll type it in Step 2.")
         st.dataframe(ic.sample_frame(), hide_index=True)
 
     if upload is not None:
@@ -258,219 +371,295 @@ def tool_page():
             st.stop()
         source = upload.name
     elif st.session_state.get("use_sample"):
-        raw = ic.sample_frame()
-        source = "sample"
+        raw, source = ic.sample_frame(), "sample"
     else:
-        st.info("Upload your readings, or use the sample data to see how the tool works.", icon=":material/info:")
+        st.info("Upload your readings, or use the sample data, to continue.", icon=":material/info:")
         st.stop()
 
     try:
         depths, times, conc = ic.parse_frame(raw)
     except ic.DataProblem as e:
         st.error(f"{e}", icon=":material/error:")
-        st.caption("The template above shows the layout the tool expects.")
+        st.caption("Compare your file with the template above.")
         st.stop()
 
     if source == "sample":
-        st.success("Using the sample data from the lecture (C₀ = 20 mg/L, five ports from 0.5 to 2.5 m).",
-                   icon=":material/check_circle:")
+        st.success("Using the lecture's sample data: suspended solids, C₀ = 20 mg/L, five ports from 0.5 to 2.5 m, "
+                   "read at six times up to 85 minutes.", icon=":material/check_circle:")
         if st.button("Use my own file instead", icon=":material/upload_file:"):
             st.session_state["use_sample"] = False
             st.rerun()
 
     # ---------------- Step 2 ----------------
     ui.step_header(2, "Describe your test", "step-2")
+    md(f"Tell the tool what the numbers mean. The most important value is {T('C₀', 'c0')}: every result is "
+       "measured against it, so a wrong C₀ shifts everything.")
     key = f"{source}-{len(depths)}x{len(times)}"
     a, b = st.columns(2, gap="large")
     c_, d_ = st.columns(2, gap="large")
-    measure = a.selectbox("What you measured", list(MEASURES),
-                          index=1 if source == "sample" else 0, key=f"measure-{key}")
+    measure = a.selectbox("What you measured", list(MEASURES), index=1 if source == "sample" else 0,
+                          key=f"measure-{key}")
     mname, munit = MEASURES[measure]
-    c0 = b.number_input(f"Starting value, C₀ ({munit})", min_value=0.01,
-                        value=float(ic.SAMPLE_INITIAL), step=0.1, format="%.2f", key=f"c0-{key}",
-                        help="The reading of the well-mixed water before settling started. "
-                             "Every result depends on it, so double-check it.")
-    unit = c_.selectbox("Depth units", list(UNIT_NAMES), format_func=lambda u: UNIT_NAMES[u],
-                        key=f"unit-{key}")
-    H = d_.number_input(f"Column depth used, H ({unit})", min_value=float(depths.min()) * 1.0001,
+    c0 = b.number_input(f"Starting value, C₀ ({munit})", min_value=0.01, value=float(ic.SAMPLE_INITIAL), step=0.1,
+                        format="%.2f", key=f"c0-{key}",
+                        help="The reading of the well-mixed water before settling started.")
+    unit = c_.selectbox("Depth units", list(UNIT_NAMES), format_func=lambda u: UNIT_NAMES[u], key=f"unit-{key}")
+    H = d_.number_input(f"Column depth to analyse, H ({unit})", min_value=float(depths.min()) * 1.0001,
                         value=float(depths.max()), step=0.1, key=f"H-{key}",
-                        help="Usually the deepest sampling port. Detention time and overflow rate are "
-                             "measured to this depth.")
-
-    st.dataframe(
-        pd.DataFrame(conc, index=pd.Index(depths, name=f"Depth ({unit})"),
-                     columns=pd.Index([f"{t:g} min" for t in times], name=f"{mname} ({munit})")),
-        use_container_width=True,
-    )
-    st.caption(f"Your readings: rows are port depths, columns are minutes after the start, cells in {munit}.")
+                        help="Usually the deepest port. Detention time and overflow rate are measured to this depth.")
+    st.dataframe(pd.DataFrame(conc, index=pd.Index(depths, name=f"Depth ({unit})"),
+                              columns=pd.Index([f"{t:g} min" for t in times])), use_container_width=True)
+    st.caption(f"Your readings in {munit}: one row per port (shallow at the top), one column per sampling time.")
 
     q = ic.assess_data_stratification(conc, depths, c0)
-    verdict = {
-        "High": ("Clear difference between the top and bottom of the column.", ":material/check_circle:"),
-        "Medium": ("Some difference between the top and bottom of the column; curves will work.",
-                   ":material/check_circle:"),
-        "Low": ("Little difference between the top and bottom. The test may have needed more time, "
-                "so the curves will bunch together.", ":material/warning:"),
-    }[q["stratification_quality"]]
-    st.subheader("Data check")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Spread between ports", q["stratification_quality"],
-              help="High if removal at the last reading differs by more than 25 points from the top port "
-                   "to the bottom port, Medium above 10, Low otherwise.")
-    m2.metric("Removal range at the last reading", f"{q['removal_range']:.1f} points",
-              help="Highest minus lowest percent removal across the ports at the final time.")
-    m3.metric("Change from top to bottom", f"{q['conc_variation']:.1f} %",
-              help=f"(highest − lowest) ÷ highest {mname} reading at the final time.")
-    st.markdown(f"{verdict[0]}")
+    st.subheader("Check your readings")
+    md(f"Before drawing anything, it's worth checking the test worked. By the last reading, the top of the column "
+       f"should be clearly cleaner than the bottom: that difference is called {T('stratification', 'strat')}.")
+    m1, m2 = st.columns(2)
+    m1.metric("Difference between top and bottom ports", f"{q['removal_range']:.1f} points",
+              help="Highest minus lowest percent removal across the ports at the last reading.")
+    m2.metric("How clearly the column separated", q["stratification_quality"],
+              help="High above 25 points, Medium above 10, Low below that.")
+    st.markdown({
+        "High": "The column separated clearly, so the curves will be well spread out.",
+        "Medium": "The column separated enough for useful curves.",
+        "Low": "The top and bottom are still similar, so the test may have needed more time. Curves will bunch "
+               "together and design values will rest more on extrapolation.",
+    }[q["stratification_quality"]])
     if q["above_initial"]:
-        st.warning(f"{q['above_initial']} reading(s) are higher than C₀ ({c0:g} {munit}), which gives negative "
-                   "removal. Check C₀ and those cells; the tool treats negative removal as 0 %.",
+        st.warning(f"{q['above_initial']} reading(s) are higher than C₀ ({c0:g} {munit}). That would mean particles "
+                   "appeared, which can't happen, so check C₀ and those cells. The tool counts them as 0 % removal.",
                    icon=":material/warning:")
     if q["rises"]:
         cells = ", ".join(f"{depths[i]:g} {unit} at {times[j]:g} min" for i, j in q["rises"][:4])
-        more = " …" if len(q["rises"]) > 4 else ""
-        st.warning(f"{len(q['rises'])} reading(s) go *up* over time ({cells}{more}). Settling should only lower "
-                   "a reading, so these are probably sampling noise.", icon=":material/warning:")
-
+        st.warning(f"{len(q['rises'])} reading(s) go up over time ({cells}{' …' if len(q['rises']) > 4 else ''}). "
+                   "Once particles sink past a port they don't come back, so a reading that rises is almost always "
+                   "sampling noise, like a stirred-up sample or an air bubble.", icon=":material/warning:")
     default_clean = "monotone" if q["rises"] else "none"
     with st.expander("Clean-up and options", expanded=bool(q["rises"])):
-        cleanup = st.radio("Readings that go up over time", list(CLEANUPS), format_func=CLEANUPS.get,
+        cleanup = st.radio("What to do with readings that go up over time", list(CLEANUPS), format_func=CLEANUPS.get,
                            index=list(CLEANUPS).index(default_clean), key=f"clean-{key}")
         sigma = 0.8
         if cleanup == "gaussian":
             sigma = st.slider("Smoothing strength", 0.1, 3.0, 0.8, 0.1, key=f"sigma-{key}",
                               help="Higher is smoother. This method treats readings as evenly spaced in time.")
-        st.caption("Evening out changes only the readings that go up, by the least amount needed "
-                   "(isotonic regression); readings that already fall over time are left exactly as measured.")
-        monotone = st.checkbox("Keep each curve from moving back up the column", value=True, key=f"mono-{key}",
-                               help="A removal level can only move deeper as time passes.")
+        st.caption("\"Even out\" lowers only the readings that rise, by the least amount needed to make each port's "
+                   "readings fall or stay level over time (isotonic regression). Readings that already behave are "
+                   "left exactly as measured.")
+        monotone = st.checkbox("Never let a curve move back up the column", value=True, key=f"mono-{key}",
+                               help="Once a removal level has reached a depth, it can't rise again.")
 
-    # ---------------- Step 3 ----------------
-    ui.step_header(3, "Isoremoval curves", "step-3")
-    st.markdown(
-        "Each curve follows one percent removal down the column over time. These are also called "
-        "**isoconcentration curves**. Where a curve meets the bottom of the column tells you the "
-        "detention time for that percent removal."
-    )
     used0 = ic.clean_monotone(conc) if cleanup == "monotone" else (
         ic.clean_gaussian(conc, sigma) if cleanup == "gaussian" else conc)
     rd0 = ic.removal_table(used0, c0, depths, times)
+
+    # ---------------- Step 3 ----------------
+    ui.step_header(3, "Turn readings into percent removal", "step-3")
+    md(f"A reading on its own doesn't say much; what matters is how much of the starting concentration is gone. "
+       f"For every cell the tool works out the {T('percent removal', 'removal')}:")
+    ex_r = (c0 - used0[0, 0]) / c0 * 100
+    ui.idea("The formula", f"<p><b>Removal = (C₀ − reading) ÷ C₀ × 100</b></p><p>For the shallowest port "
+            f"({depths[0]:g} {unit}) at the first reading ({times[0]:g} min): ({c0:g} − {used0[0, 0]:.4g}) ÷ {c0:g} "
+            f"× 100 = <b>{ex_r:.1f} %</b>.</p>")
+    try:
+        import cmcrameri.cm as cmc
+        cmap = cmc.davos_r
+    except Exception:
+        cmap = "Blues"
+    import matplotlib
+    cm = matplotlib.colormaps[cmap] if isinstance(cmap, str) else cmap
+
+    def _cell(v):
+        rgb = cm(float(np.clip(v, 0, 100)) / 100)[:3]
+        lum = sum(w * (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
+                  for w, c in zip((0.2126, 0.7152, 0.0722), rgb))
+        ink = "#000000" if (lum + 0.05) / 0.05 >= 1.05 / (lum + 0.05) else "#ffffff"
+        return f"background-color: {matplotlib.colors.to_hex(rgb)}; color: {ink}"
+
+    sty = (rd0.clip(0, 100).round(1).rename(columns=lambda t: f"{t:g} min").rename_axis(f"Depth ({unit})")
+           .style.map(_cell).format("{:.1f} %"))
+    st.dataframe(sty, use_container_width=True)
+    st.caption("Darker cells = more removed. Read across a row to follow one port through time, or down a column to "
+               "compare depths at one moment.")
+    ui.idea("What to notice", f"""
+<p><b>Removal grows to the right</b> (with time): the longer the column stands, the more particles have had time
+to sink past each port.</p>
+<p><b>Removal shrinks downward</b> (with depth): to clear a deep port, a particle has to fall farther, so only the
+faster ones have made it in the same time. Meanwhile particles from above are still arriving.</p>
+<p>That pattern is what makes the curves in the next step slope downward over time.</p>""")
+
+    # ---------------- Step 4 ----------------
+    ui.step_header(4, "Draw the isoremoval curves", "step-4")
+    md(f"Now pick a percentage, say 50 %, and find every place in the table where removal is exactly 50 %. Usually "
+       f"that falls between two ports, so the tool {T('interpolates', 'interp')} to find the depth. Joining those "
+       f"points over time draws the 50 % {T('isoremoval curve', 'iso')}.")
     lo, hi = float(np.clip(rd0.values, 0, 100).min()), float(np.clip(rd0.values, 0, 100).max())
     options = list(range(5, 100, 5))
     default_p = [p for p in range(10, 100, 10) if lo <= p <= hi] or [p for p in options if lo <= p <= hi][:6]
-    percents = st.pills("Percent removal curves to draw", options, selection_mode="multi", default=default_p,
-                        format_func=lambda p: f"{p}%", key=f"pills-{key}",
-                        help=f"Your readings range from {lo:.0f} % to {hi:.0f} % removal. Curves outside that "
-                             "range rest on the 100 %-at-the-surface assumption or on extrapolation.")
+    percents = st.pills("Curves to draw", options, selection_mode="multi", default=default_p,
+                        format_func=lambda p: f"{p} %", key=f"pills-{key}",
+                        help=f"Your table runs from {lo:.0f} % to {hi:.0f} % removal. Curves outside that range rest on "
+                             "assumptions or extrapolation.")
     percents = sorted(percents or [])
     if not percents:
-        st.info("Pick at least one percentage above to draw its curve.", icon=":material/info:")
+        st.info("Pick at least one percentage to draw its curve.", icon=":material/info:")
         st.stop()
-
     used, rd, cv, design, depth_tab = _compute(depths, times, conc, float(c0), float(H), cleanup, float(sigma),
                                                 monotone, tuple(percents), unit)
 
-    with st.expander(f"Percent removal at each port and time"):
-        st.markdown(f"Removal = (C₀ − reading) ÷ C₀ × 100. For example, at {depths[0]:g} {unit} after "
-                    f"{times[0]:g} min: ({c0:g} − {used[0, 0]:.4g}) ÷ {c0:g} × 100 = **{rd.iloc[0, 0]:.1f} %**.")
-        st.dataframe(rd.round(1).rename(columns=lambda t: f"{t:g} min").rename_axis(f"Depth ({unit})"),
-                     use_container_width=True)
+    # a click on the chart picks the curve to follow
+    fkey = f"follow-{key}"
+    clicked = _new_selection(f"curves-{key}")
+    tmap = st.session_state.get(f"tmap-{key}", [])
+    if clicked is not None and clicked.get("curve_number") is not None and clicked["curve_number"] < len(tmap):
+        p_clicked = tmap[clicked["curve_number"]]
+        if p_clicked in percents:
+            st.session_state[fkey] = p_clicked
+    if st.session_state.get(fkey) not in percents:
+        st.session_state[fkey] = None
+    follow = st.segmented_control("Follow one curve (or click any point on the chart)", percents, key=fkey,
+                                  format_func=lambda p: f"{p} %",
+                                  help="Highlights one curve and explains it below the chart.")
 
     reach = design[design["Extrapolated"] == "No"]["Curve (%)"].tolist() if not design.empty else []
-    desc = (f"Depth (downward) against time for {', '.join(f'{p}%' for p in percents)} removal. "
-            f"Solid lines come from your readings; dotted lines extend a curve in a straight line past your "
-            f"last reading at {cv.t_last:g} min. ")
-    desc += (f"Within your data, the {', '.join(f'{p}%' for p in reach)} curve(s) reach the bottom at {H:g} {unit}."
+    desc = (f"Depth against time for the {', '.join(f'{p} %' for p in percents)} curves. Depth increases downward, "
+            f"like the column itself. Solid lines come from your readings; dotted lines continue a curve past your last "
+            f"reading at {cv.t_last:g} min. " + ("A dashed grey straight line runs from the start to where the followed "
+                                          "curve meets the bottom. " if follow is not None else ""))
+    desc += (f"Within your data the {', '.join(f'{p} %' for p in reach)} curve(s) reach the bottom ({H:g} {unit})."
              if reach else "No curve reaches the bottom within your data.")
     ui.figure_description(desc)
-    fig, far = curves_figure(cv, percents, unit, munit)
-    st.pyplot(fig, use_container_width=True)
+    fig, tmap, far = curves_figure(cv, percents, unit, follow)
+    st.session_state[f"tmap-{key}"] = tmap
+    st.plotly_chart(fig, theme=None, key=f"curves-{key}", on_select="rerun", selection_mode="points",
+                    config=ui.plot_config("isoremoval_curves"), alt=desc)
+    st.caption("Solid line: from your readings. Dotted line: continued past your last reading, ending in a hollow "
+               "marker where it reaches the bottom. Hover over a point to read it, click it to follow that curve, drag "
+               "to zoom (double-click to reset), and use the camera icon to save the chart.")
     if far:
-        st.caption("Off the right edge: " + "; ".join(f"{p}% reaches the bottom at {t:,.0f} min" for p, t in far)
-                   + ". That is more than three times your last reading, so treat it with caution.")
+        st.caption("Beyond the right edge: " + "; ".join(f"the {p} % curve reaches the bottom at about {t:,.0f} min"
+                                                         for p, t in far)
+                   + ". That is more than three times your last reading, so treat it with real caution.")
+
+    if follow is not None:
+        _explain_curve(cv, follow, unit)
+    else:
+        ui.idea("How to read the chart", f"""
+<p>Each line follows one percent removal down the column. Pick a line and read along it: at a given time, the line's
+depth is where that much of the water has cleared. Above the line, more than that percentage is gone; below it, less.</p>
+<p>Lines for low percentages drop quickly, because the fastest few particles sink fast. Lines for high percentages
+creep down slowly, because removing most of the particles means waiting for slow ones too.</p>
+<p>Click any point, or pick a curve above, to follow one curve and see what its shape tells you.</p>""")
 
     with st.expander("The curves as a table"):
-        st.markdown(f"Depth ({unit}) of each curve at each time. Blank means the curve is below the "
-                    "bottom of the column (or doesn't exist yet).")
-        st.dataframe(depth_tab.rename(columns=lambda p: f"{p}%").rename_axis("Time (min)")
-                     .map(lambda v: "" if pd.isna(v) else f"{v:.3f}"),
-                     use_container_width=True)
-
-    with st.expander("How each point on a curve is found"):
+        md(f"The depth ({unit}) of each curve every 5 minutes and at each reading. A blank cell means that curve hasn't "
+           "started yet or is already below the column's bottom.")
+        st.dataframe(depth_tab.rename(columns=lambda p: f"{p} %").rename_axis("Time (min)")
+                     .map(lambda v: "" if pd.isna(v) else f"{v:.3f}"), use_container_width=True)
+    with st.expander("How one point on a curve is found (worked interpolation)"):
         _interp_example(cv, percents, unit)
 
-    fig_png = _png(fig)
-    plt.close(fig)
-
-    # ---------------- Step 4 ----------------
-    ui.step_header(4, "Design values", "step-4")
-    st.markdown(
-        f"For each curve, the time it reaches the bottom (H = {H:g} {unit}) is its **detention time**, "
-        f"the **overflow rate** is H ÷ that time (in m/d), and the **overall removal** is the shaded area under the "
-        f"removal profile at that time, divided by H."
-    )
+    # ---------------- Step 5 ----------------
+    ui.step_header(5, "From curves to design values", "step-5")
+    md(f"Each curve gives three numbers. Think of the column as a model of the basin: water enters at the top, and "
+       f"a particle has to sink the full depth H = {H:g} {unit} before the water leaves.")
+    ui.idea("Three numbers per curve", f"""
+<p><b>1. {T('Detention time', 'detention')}.</b> The time the curve takes to reach the bottom. Hold water that long
+and that percentage is removed even at the very bottom.</p>
+<p><b>2. {T('Overflow rate', 'overflow')}</b> = H ÷ detention time. This is the speed of a particle that starts at
+the surface and just reaches the bottom in that time. Every particle faster than this is removed completely. The
+tool converts it to m/d, the unit used for basin design.</p>
+<p><b>3. {T('Overall removal', 'overall')}.</b> Slower particles aren't all lost: the ones that started part-way down
+reach the bottom too. So at the moment the curve hits the bottom, removal is 100 % at the surface and falls to the
+curve's own percentage at the bottom. The average over the whole depth is the overall removal. It is always higher
+than the curve's percentage.</p>""")
     if design.empty:
-        st.warning("None of the chosen curves reach the bottom of the column, so there are no design values yet. "
-                   "Try lower percentages in Step 3.", icon=":material/warning:")
+        st.warning("None of the chosen curves reach the bottom of the column yet, so there are no design values. "
+                   "Pick lower percentages in Step 4.", icon=":material/warning:")
         st.stop()
-
     show = design.copy()
     show["× last reading"] = (show["Reaches bottom at (min)"] / cv.t_last).round(2)
-    show = show.rename(columns={"Curve (%)": "Curve", "Reaches bottom at (min)": "Bottom at (min)",
+    show = show.rename(columns={"Curve (%)": "Curve", "Reaches bottom at (min)": "At bottom (min)",
                                 "Detention time (h)": "Detention (h)", "Overflow rate (m/d)": "Overflow (m/d)",
-                                "Overall removal (%)": "Overall removal (%)"})
-    show["Curve"] = show["Curve"].map(lambda p: f"{p}%")
-    st.dataframe(show, hide_index=True, use_container_width=True,
-                 column_config={"Extrapolated": st.column_config.TextColumn(
-                     help="Yes when the curve reaches the bottom after your last reading, so the value rests on "
-                          "extending the curve.")})
+                                "Overall removal (%)": "Overall removal (%)", "× last reading": "× data"})
+    show["Curve"] = show["Curve"].map(lambda p: f"{p} %")
+    st.dataframe(show, hide_index=True, use_container_width=True, column_config={
+        "Extrapolated": st.column_config.TextColumn(help="Yes when the curve reaches the bottom after your last reading."),
+        "At bottom (min)": st.column_config.NumberColumn(help="When the curve reaches the bottom of the column."),
+        "Detention (h)": st.column_config.NumberColumn(help="Detention time = the time above, in hours."),
+        "Overflow (m/d)": st.column_config.NumberColumn(help="Overflow rate = H ÷ detention time, in metres per day."),
+        "× data": st.column_config.NumberColumn(help="How far past your last reading: 2 means twice as long.")})
     if (design["Extrapolated"] == "Yes").any():
-        st.caption("Rows marked Extrapolated reach the bottom after your last reading. Their values come from "
-                   "extending each curve in a straight line, so they're less certain the further past the data "
-                   "they go (see the × last reading column).")
+        md(f"Rows marked **Extrapolated** reach the bottom after your last reading, so their values come from "
+           f"{T('extrapolating', 'extrap')} each curve in a straight line along its last stretch, the same way you would "
+           "by hand. The × data column shows how far beyond your last reading each one goes (2 = twice as long).")
 
-    st.subheader("Read your design values")
+    # target readout (before the plot so the crosshair can be drawn)
+    st.subheader("The two design plots", anchor="step-6-plots")
+    md("Plot each curve's overall removal against its overflow rate, and against its detention time. Each point is one "
+       "curve, drawn in the same colour and shape as on the curves chart. The two plots share the vertical axis, so a "
+       "point sits at the same height in both.")
+    wkey = f"worked-{key}"
+    clicked_d = _new_selection(f"design-{key}")
+    pmap = st.session_state.get(f"pmap-{key}", [])
+    rows_p = design["Curve (%)"].tolist()
+    if clicked_d is not None and clicked_d.get("curve_number") is not None and clicked_d["curve_number"] < len(pmap):
+        pc = pmap[clicked_d["curve_number"]]
+        if pc in rows_p:
+            st.session_state[wkey] = pc
+            st.session_state[f"wxn-{key}"] = st.session_state.get(f"wxn-{key}", 0) + 1
+    if st.session_state.get(wkey) not in rows_p:
+        st.session_state[wkey] = 50 if 50 in rows_p else rows_p[len(rows_p) // 2]
+
     rmin, rmax = float(design["Overall removal (%)"].min()), float(design["Overall removal (%)"].max())
-    tcol, _ = st.columns([1, 2])
-    target = tcol.number_input("Target overall removal (%)", min_value=0.0, max_value=100.0,
-                             value=float(np.clip(70.0, rmin, rmax)), step=1.0, key=f"target-{key}",
-                             help=f"Your curves cover {rmin:.1f} % to {rmax:.1f} % overall removal.")
+    tkey = f"target-{key}"
+    if tkey not in st.session_state:
+        st.session_state[tkey] = float(np.clip(70.0, rmin, rmax))
+    target = st.session_state[tkey]
     read = ic.read_design(design, target)
+    figd, pmap = design_figure(design, percents, target, (read[0], read[1]) if read else None)
+    st.session_state[f"pmap-{key}"] = pmap
+    ddesc = ("Two plots side by side sharing the overall-removal axis. Left: overall removal falls as the overflow rate "
+             "rises. Right: overall removal rises with detention time. Hollow points are extrapolated; the star marks "
+             "your target.")
+    ui.figure_description(ddesc)
+    st.plotly_chart(figd, theme=None, key=f"design-{key}", on_select="rerun", selection_mode="points",
+                    config=ui.plot_config("design_plots"), alt=ddesc)
+    ui.idea("Why two plots", f"""
+<p><b>Overflow rate sets the basin's surface area</b> (area = flow ÷ overflow rate). Lower overflow rate, bigger
+footprint, more removal. That's the left plot: removal falls as overflow rate rises.</p>
+<p><b>Detention time sets the basin's volume</b> (volume = flow × time). Longer time, bigger tank, more removal.
+That's the right plot.</p>
+<p>A real design has to meet both, which is what the basin tool checks.</p>""")
+
+    wxn = st.session_state.get(f"wxn-{key}", 0)   # bumped by a click on the design plots, which opens this box
+    with st.expander("Worked example: how overall removal is calculated", expanded=wxn > 0, key=f"wx-{key}-{wxn}"):
+        _removal_example(cv, design, unit, wkey, depths)
+
+    # ---------------- Step 6 ----------------
+    ui.step_header(6, "Read your design values", "step-6")
+    md("Choose the overall removal your basin must achieve. The tool reads across to each plot (the dashed lines and "
+       "the star above) and down to the overflow rate and detention time.")
+    tcol, _ = st.columns([1, 2])
+    tcol.number_input("Target overall removal (%)", min_value=0.0, max_value=100.0, step=1.0,
+                      key=tkey, help=f"Your curves cover {rmin:.1f} % to {rmax:.1f} % overall removal.")
     if read is None:
-        st.warning(f"{target:g} % is outside what your curves cover ({rmin:.1f}–{rmax:.1f} %). "
-                   "Pick a target in that range, or add curves in Step 3.", icon=":material/warning:")
-        vo = th = None
+        st.warning(f"{target:g} % is outside what your curves cover ({rmin:.1f}–{rmax:.1f} %). Pick a target in that "
+                   "range, or draw more curves in Step 4.", icon=":material/warning:")
     else:
         vo, th, ex = read
-        st.markdown(f"For **{target:g} % overall removal**, read from your curves: overflow rate ≈ "
-                    f"**{vo:,.1f} m/d** and detention time ≈ **{th:.2f} h** ({th * 60:.0f} min)."
-                    + (" Part of this comes from extrapolated points." if ex else ""))
-        if BASIN_APP_URL:
-            st.link_button("Open the Basin Design tool with these values",
-                           f"{BASIN_APP_URL}?vo={vo:.2f}&t={th:.3f}&R={target:g}", icon=":material/open_in_new:")
-        elif BASIN_TOOL_URL:
-            st.markdown(f"Next, take these to the [Sedimentation Basin Design tool]({BASIN_TOOL_URL}).")
-
-    g1, g2 = st.columns(2, gap="large")
-    with g1:
-        ui.figure_description("Overall removal falls as overflow rate rises: a faster surface loading lets more "
-                              "particles leave with the effluent. Filled points come from your readings; "
-                              "hollow points are extrapolated.")
-        f_vo = design_figure(design, "Overflow rate (m/d)", "Overflow rate (m/d)", "orange", "s",
-                             target if vo else None, vo)
-        st.pyplot(f_vo, use_container_width=True)
-    with g2:
-        ui.figure_description("Overall removal rises with detention time: the longer water stays, the more "
-                              "particles settle out.")
-        f_th = design_figure(design, "Detention time (h)", "Detention time (h)", "blue", "o",
-                             target if th else None, th)
-        st.pyplot(f_th, use_container_width=True)
-
-    with st.expander("Worked example: overall removal for one curve", expanded=False):
-        _removal_example(cv, design, unit)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Target overall removal", f"{target:g} %")
+        m2.metric("Overflow rate", f"{vo:,.1f} m/d")
+        m3.metric("Detention time", f"{th:.2f} h", help=f"{th * 60:.0f} minutes")
+        md(f"To remove {target:g} % of the particles, a basin needs an overflow rate of at most **{vo:,.1f} m/d** and a "
+           f"detention time of at least **{th:.2f} h**." + (" Part of this rests on extrapolated points." if ex else ""))
+        st.link_button("Design the basin with these values", f"{BASIN_APP_URL}?vo={vo:.2f}&t={th:.3f}&R={target:g}",
+                       icon=":material/open_in_new:", type="primary")
+        st.caption("Opens the Sedimentation Basin Design tool in a new tab with these three numbers filled in.")
 
     # ---------------- Downloads ----------------
-    st.subheader("Download your results")
+    st.subheader("Save your results")
     xbuf = BytesIO()
     with pd.ExcelWriter(xbuf, engine="openpyxl") as xw:
         pd.DataFrame(conc, index=depths, columns=times).rename_axis(f"Depth ({unit}) / Time (min)").to_excel(
@@ -481,22 +670,32 @@ def tool_page():
         rd.rename_axis(f"Depth ({unit}) / Time (min)").to_excel(xw, sheet_name="Percent removal")
         depth_tab.rename(columns=lambda p: f"{p}%").rename_axis("Time (min)").to_excel(xw, sheet_name="Curve depths")
         show.to_excel(xw, sheet_name="Design values", index=False)
-        pd.DataFrame({"Setting": ["Measured", "C0", "Column depth H", "Depth units", "Clean-up",
-                                  "Curves kept from moving up", "Source"],
+        pd.DataFrame({"Setting": ["Measured", "C0", "Column depth H", "Depth units", "Clean-up", "Curves kept from "
+                                  "moving up", "Source"],
                       "Value": [measure, f"{c0:g} {munit}", f"{H:g}", unit, CLEANUPS[cleanup], monotone, source]}
                      ).to_excel(xw, sheet_name="Settings", index=False)
-    d1, d2 = st.columns(2)
-    d3, d4 = st.columns(2)
-    d1.download_button("All tables (.xlsx)", xbuf.getvalue(), "isoremoval_results.xlsx",
-                       icon=":material/download:", use_container_width=True)
-    d2.download_button("Curves plot (.png)", fig_png, "isoremoval_curves.png", icon=":material/download:",
-                       use_container_width=True)
-    d3.download_button("Overflow-rate plot (.png)", _png(f_vo), "removal_vs_overflow_rate.png",
-                       icon=":material/download:", use_container_width=True)
-    d4.download_button("Detention-time plot (.png)", _png(f_th), "removal_vs_detention_time.png",
-                       icon=":material/download:", use_container_width=True)
-    st.caption("Plots download in the colours you're viewing. For a printed report, switch to light mode first.")
-    plt.close("all")
+    st.download_button("Download all tables (.xlsx)", xbuf.getvalue(), "isoremoval_results.xlsx",
+                       icon=":material/download:")
+    st.caption("To save a chart as an image, use the camera icon at its top right. Charts save on a white background, "
+               "ready for a report.")
+
+
+def _explain_curve(cv, p, unit):
+    ts, zs, ext, t_b, extrap = curve_points(cv, p)
+    pts = [(t, z) for t, z in zip(ts, zs) if np.isclose(t, cv.times).any()]
+    sample = "; ".join(f"{z:.2f} {unit} at {t:g} min" for t, z in pts[:4])
+    body = f"<p><b>Reading the {p} % curve.</b> It leaves the surface at time zero and sinks: {sample}.</p>"
+    if t_b is not None and not extrap:
+        body += (f"<p>It reaches the bottom ({cv.H:g} {unit}) at <b>{t_b:.1f} min</b>. From that moment, at least "
+                 f"{p} % of the particles are gone at every depth in the column.</p>")
+    elif t_b is not None:
+        body += (f"<p>It hasn't reached the bottom by your last reading, so it is continued in a straight line "
+                 f"(dotted) and reaches the bottom at about <b>{t_b:.0f} min</b>, an estimate.</p>")
+    body += (f"<p><b>Why it bends.</b> The dashed grey line goes straight from the start to where this curve meets the "
+             f"bottom. If particles kept their size, which is called {T('discrete settling', 'discrete')}, the curve would "
+             f"follow it. Real curves bend downward, getting steeper with time, because flocs stick together and fall "
+             f"faster as they grow, which is called {T('flocculent settling', 'floc')}. That's why the test is needed.</p>")
+    ui.idea("This curve", body)
 
 
 def _interp_example(cv, percents, unit):
@@ -507,90 +706,94 @@ def _interp_example(cv, percents, unit):
             if r[i] + 0.5 < p < r[i - 1] - 0.5 and i - 1 > 0:
                 z1, r1, z2, r2 = z[i - 1], r[i - 1], z[i], r[i]
                 depth = z1 + (z2 - z1) * (r1 - p) / (r1 - r2)
-                st.markdown(
-                    f"Take the **{p}% curve at {t:g} min**. Removal is {r1:.1f} % at {z1:g} {unit} and {r2:.1f} % "
-                    f"at {z2:g} {unit}, so {p} % sits between them. Interpolating in a straight line:\n\n"
-                    f"depth = {z1:g} + ({z2:g} − {z1:g}) × ({r1:.1f} − {p}) ÷ ({r1:.1f} − {r2:.1f}) "
-                    f"= **{depth:.3f} {unit}**\n\n"
-                    "The tool repeats this every quarter minute for every curve, using a straight line in time "
-                    "between your readings, and 0 % removal at the start. Above the top port it assumes 100 % "
-                    "removal at the water surface, the same assumption the overall-removal area uses."
-                )
+                md(f"Take the **{p} % curve at {t:g} min**. At that time removal is {r1:.1f} % at {z1:g} {unit} and "
+                   f"{r2:.1f} % at {z2:g} {unit}, so {p} % lies between those two ports. Drawing a straight line "
+                   f"between them:\n\n"
+                   f"depth = {z1:g} + ({z2:g} − {z1:g}) × ({r1:.1f} − {p}) ÷ ({r1:.1f} − {r2:.1f}) = **{depth:.3f} {unit}**\n\n"
+                   f"By hand you'd repeat this dozens of times. The tool does it every quarter-minute for every curve. "
+                   f"Between readings it assumes removal changes steadily with time, starting from 0 % at time zero, and "
+                   f"above the top port it uses 100 % removal at the water surface, where the water has cleared from "
+                   f"the very first moment.")
                 return
-    st.markdown("Pick a curve between your readings' removal values to see a worked example.")
+    md("Pick a curve that falls between your ports to see a worked example.")
 
 
-def _removal_example(cv, design, unit):
+def _removal_example(cv, design, unit, wkey, depths):
     rows = design["Curve (%)"].tolist()
-    default = rows.index(70) if 70 in rows else len(rows) // 2
-    p = st.selectbox("Curve", rows, index=default, format_func=lambda v: f"{v}% curve")
+    p = st.selectbox("Curve (or click a point on the design plots)", rows, key=wkey,
+                     format_func=lambda v: f"{v} % curve")
     row = design[design["Curve (%)"] == p].iloc[0]
     t_b = row["Reaches bottom at (min)"]
     z, r = cv.removal_profile_at(t_b)
-    left, right = st.columns([1, 1], gap="large")
+    z, r = np.asarray(z, float), np.asarray(r, float)
+    bands = _bands(z, cv.H, depths)
+    md(f"Freeze the column at **{t_b:g} min**, the moment the {p} % curve reaches the bottom, and look at removal "
+       f"down the depth. It is 100 % at the surface and falls to {p} % at the bottom.")
+    left, right = st.columns([1.1, 1], gap="large")
     with left:
-        ui.figure_description(f"The removal profile when the {p}% curve reaches the bottom at {t_b:g} min: "
-                              f"removal against depth, with the area under it shaded.")
-        fig = profile_figure(z, r, unit)
-        st.pyplot(fig, use_container_width=True)
-        plt.close(fig)
+        pdesc = (f"Removal against depth at {t_b:g} min, with the area under the line shaded in strips, one strip "
+                 "between each pair of ports.")
+        ui.figure_description(pdesc)
+        st.plotly_chart(profile_figure(z, r, unit, cv.H, bands), theme=None, key=f"profile-{p}",
+                        config=ui.plot_config(f"removal_profile_{p}pct"), alt=pdesc)
     with right:
-        area = float(np.trapezoid(r, z))
-        st.markdown(
-            f"1. At t = {t_b:g} min, find the removal at each depth (100 % at the surface).\n"
-            f"2. Add up trapezoids: each is (average removal of two neighbouring points) × (depth between them).\n"
-            f"3. Shaded area = {area:.1f} %·{unit}.\n"
-            f"4. Overall removal = area ÷ H = {area:.1f} ÷ {cv.H:g} = **{area / cv.H:.1f} %**."
-        )
+        area_rows = []
+        for z0, z1 in bands:
+            m = (z >= z0 - 1e-9) & (z <= z1 + 1e-9)
+            zz = np.concatenate([[z0], z[m], [z1]])
+            rr = np.concatenate([[np.interp(z0, z, r)], r[m], [np.interp(z1, z, r)]])
+            area_rows.append((z0, z1, float(np.interp(z0, z, r)), float(np.interp(z1, z, r)), float(np.trapezoid(rr, zz))))
+        total = sum(a[-1] for a in area_rows)
+        md(f"<p>Each strip is roughly a {T('trapezoid', 'trapezoid')}: its area is the average removal at its top and "
+           f"bottom times its height. Hover over a strip to see its area.</p>")
+        tab = pd.DataFrame([{"Strip": f"{a:g}–{b:g} {unit}", "Top (%)": round(ra, 1), "Bottom (%)": round(rb, 1),
+                             f"Area (%·{unit})": round(ar, 1)} for a, b, ra, rb, ar in area_rows])
+        st.dataframe(tab, hide_index=True, use_container_width=True)
+        md(f"Total shaded area = **{total:.1f} %·{unit}**. Dividing by the depth gives the average removal over the column:"
+           f"\n\n**Overall removal = {total:.1f} ÷ {cv.H:g} = {total / cv.H:.1f} %**")
         if row["Extrapolated"] == "Yes":
-            st.caption("This time is past your last reading, so the profile comes from extending the curves, "
-                       "as in the lecture's hand method.")
-        pts = pd.DataFrame({f"Depth ({unit})": np.round(z, 3), "Removal (%)": np.round(r, 1)})
-        if len(pts) > 12:
-            pts = pts.iloc[np.unique(np.linspace(0, len(pts) - 1, 12).astype(int))]
-            st.caption("Every few points shown; the calculation uses all of them.")
-        st.dataframe(pts, hide_index=True, use_container_width=True)
+            st.caption("This moment is after your last reading, so the profile comes from extending each curve, as "
+                       "you would by hand. Strips are not exact trapezoids here; the tool adds up the exact area.")
 
 
 # ---------------------------------------------------------------------------
 # Accessibility page
 # ---------------------------------------------------------------------------
 def accessibility_page():
-    ui.inject_css()
+    ui.setup_page()
     _sidebar()
     st.title("Accessibility")
-    st.markdown("These are the choices behind this tool and where it still falls short. "
-                "The target is WCAG 2.1 level AA, the level most universities ask for.")
+    md("These are the choices behind this tool and where it still falls short. The target is WCAG 2.1 level AA, the "
+       "level most universities ask for.")
     st.subheader("Reading")
-    st.markdown(
-        "- Text is set in **Atkinson Hyperlegible Next**, designed by the Braille Institute for readers with low "
-        "vision: letters that are easy to confuse (I, l, 1; O, 0) are drawn to differ.\n"
-        "- Reading text is 18 px, lines stop at about 70 characters, and there are only two weights.\n"
-        "- New terms (isoremoval curve, detention time, overflow rate) are explained where they first appear, "
-        "and every field has a visible label and a short note.")
+    md("- Text is set in **Open Sans**, a humanist sans-serif with open letter shapes, large x-height and clear "
+       "figures, served with the app so it looks the same on every device.\n"
+       "- Reading text is 18 px and lines stop at about 72 characters.\n"
+       "- Words with a dotted underline explain themselves. Hover to preview; click, tap, Enter or Space to pin; "
+       "Escape or a click elsewhere closes the note.\n"
+       "- Every field has a visible label and a short note; every step says what it does and why.")
     st.subheader("Colour and figures")
-    st.markdown(
-        "- Light mode is near-black on warm paper and dark mode is white on black, both above 4.5:1 contrast. "
-        "The theme follows your device; switch it in the menu at the top right, under Settings.\n"
-        "- **Colour is never the only cue.** Each curve has its own marker shape and is labelled with its "
-        "percentage at its end; extended parts are dotted; extrapolated design points are hollow.\n"
-        "- Curve colours come from Fabio Crameri's **Davos** colour map, which is even to the eye and readable "
-        "in greyscale. Design-plot colours follow Jack Baker's guidance on choosing colours for figures. "
-        "They were checked under simulated colour blindness (Machado, Oliveira and Fernandes, 2009).\n"
-        "- Every figure has a sentence above it saying what it shows, and the same numbers are available as a "
-        "table and in the Excel download.")
+    md("- The tool opens in light mode: near-black on warm paper. Dark mode (white on black) is in the menu at the top "
+       "right, under Settings, and your choice is remembered. Both are above 4.5:1 contrast.\n"
+       "- Charts sit on white, in both modes, so they print and paste into reports cleanly.\n"
+       "- **Colour is never the only cue.** Each curve has its own marker shape, shown in a boxed legend outside the "
+       "plotting area; extended parts are dotted; extrapolated design points are hollow. Nothing is labelled on top of "
+       "the data. Hover over any point to read its values.\n"
+       "- Curve colours come from Fabio Crameri's **Davos** colour map (even to the eye, readable in greyscale); other "
+       "colours follow Jack Baker's guidance on figure colours. They were checked under simulated colour blindness "
+       "(Machado, Oliveira and Fernandes, 2009).\n"
+       "- Every chart has a sentence above it saying what it shows, the same text as its screen-reader description, "
+       "and its numbers in a table and in the Excel download.")
     st.subheader("Keyboard, touch and motion")
-    st.markdown(
-        "- Everything works with a keyboard; focus shows as a thick outline. Tab past the menu with "
-        "\"Skip to the tool\".\n"
-        "- Buttons and fields are at least 48 px tall.\n"
-        "- If your device asks for reduced motion, the app's animations are turned off.")
+    md("- Everything except the charts works with a keyboard, with a thick focus outline. \"Skip to the tool\" jumps "
+       "past the menu. For the charts, the \"Follow one curve\" control and the worked-example menu do what clicking "
+       "a point does.\n"
+       "- Buttons and fields are at least 48 px tall.\n"
+       "- Sections fade up gently as you scroll. If your device asks for reduced motion, there is no fading or "
+       "animation at all.")
     st.subheader("What still falls short")
-    st.markdown(
-        "- Plots are images. Screen readers get the sentence above each one and the tables, not the picture.\n"
-        "- On a phone the curve plot's labels are small; use the expand button on the plot, or the table.\n"
-        "- Neighbouring curves are close in colour on purpose (darker means more removal); tell them apart by "
-        "their marker shape and the label at the end of each line.\n"
-        "- Some widgets (the file uploader, menus) are Streamlit's own, so their behaviour is Streamlit's.\n"
-        "- If something here doesn't work for you, tell your instructor or open an issue on the "
-        "[GitHub repository](https://github.com/gregor-posadas/isoremoval/issues), and it will be fixed.")
+    md("- The charts (Plotly) can't be explored point by point with a keyboard or screen reader; use the tables "
+       "and the Excel download instead.\n"
+       "- Some widgets (the file uploader, menus) are Streamlit's own, so their behaviour is Streamlit's.\n"
+       "- If something doesn't work for you, tell your instructor or open an issue on "
+       "[GitHub](https://github.com/gregor-posadas/isoremoval/issues), and it will be fixed.")

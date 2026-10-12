@@ -494,14 +494,18 @@ detention time (which sets its volume).</p>
     rd0 = ic.removal_table(used0, c0, depths, times)
 
     st.subheader("Replay your test", anchor="replay")
-    md(f"This is your {T('settling column', 'column')}, rebuilt from your readings. Press play to watch it settle: dots are "
-       f"particles still in suspension, the ports flash at each sampling time, and your readings fill in the table as "
-       f"they were taken. The dashed lines mark where removal is 20 %, 40 %, 60 % … right now. Watch them sink: the "
-       f"paths they trace are the isoremoval curves you'll draw in Step 4.")
+    md(f"This is your {T('settling column', 'column')}, rebuilt from your readings. Press play to watch it settle. Each dot "
+       f"is a particle, and each one sinks along its own isoremoval curve, so the dots go exactly where your readings "
+       f"say: at every port and sampling time, the share of dots still above the port matches your measured removal. "
+       f"Because the particles stick together and grow ({T('flocculent settling', 'floc')}), every dot speeds up as "
+       f"it falls and the faster, bigger ones pull ahead. Dots that reach the floor build up the sludge, and the share "
+       f"on the floor follows your overall removal. The ports flash at each sampling time and your readings fill in the "
+       f"table. The dashed lines mark where removal is 20 %, 40 %, 60 % … right now; the orange dot starts at the "
+       f"surface and rides one of them, which is the isoremoval curve you'll draw in Step 4.")
     lo0, hi0 = float(np.clip(rd0.values, 0, 100).min()), float(np.clip(rd0.values, 0, 100).max())
     lv = [p for p in range(20, 100, 20) if lo0 - 10 <= p <= hi0 + 10] or [50]
     components.html(_replay_html(depths, times, used0, float(c0), float(H), unit, munit, tuple(lv), monotone),
-                    height=660, scrolling=False)
+                    height=700, scrolling=False)
     st.caption("Use Play, Start over and the time slider (arrow keys work on it). The text under the animation reads out "
                "the removal at each port. Particles are drawn only where your data say they are still suspended.")
 

@@ -4,7 +4,6 @@ from io import BytesIO
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
 
 import iso_calc as ic
@@ -210,61 +209,77 @@ def curves_figure(cv, percents, unit, follow=None):
                        showarrow=False, font=dict(size=13, color=ui.INK2), xanchor="center")
     ui.base_layout(fig, height=440, legend_title="Isoremoval curve (percent removal)", n_items=len(percents), per_row=4,
                    top=36)
-    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=12, title_text="Time since the test started (min)", range=[0, xmax]))
+    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=14, title_text="Time since the test started (min)", range=[0, xmax]))
     fig.update_yaxes(**ui.style_axes(fig, title_text=f"Depth below the water surface ({unit})",
                                      range=[cv.H * 1.02, -0.04 * cv.H]))
     return fig, trace_map, far
 
 
-def design_figure(design, percents, target=None, read=None):
+def design_figure(design, percents, x_col, title, target=None, xread=None, show_ytitle=True):
+    """One design plot (overall removal against x_col). Two of these sit side by side in columns, with
+    identical heights, margins and y range, so they line up on desktop and stack on a phone."""
     cols = dict(zip(percents, ui.curve_colors(len(percents))))
     syms = dict(zip(percents, ui.SYMBOLS))
-    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.07,
-                        subplot_titles=("Overall removal vs. overflow rate", "Overall removal vs. detention time"))
+    fig = go.Figure()
     pt_map = []
-    if target is not None and read is not None:
-        vo, th = read
-        for c, xv in [(1, vo), (2, th)]:
-            fig.add_shape(type="line", x0=0, x1=xv, y0=target, y1=target, line=dict(color=ui.INK, width=1.6, dash="dash"),
-                          row=1, col=c)
-            fig.add_shape(type="line", x0=xv, x1=xv, y0=0, y1=target, line=dict(color=ui.INK, width=1.6, dash="dash"),
-                          row=1, col=c)
-            fig.add_trace(go.Scatter(x=[xv], y=[target], mode="markers", name=f"Target: {target:g} %",
-                                     showlegend=(c == 1), legendgroup="target",
-                                     marker=dict(symbol="star", size=15, color=ui.GOLD, line=dict(color=ui.INK, width=1.5)),
-                                     hovertemplate=(f"<b>Target {target:g} %</b><br>Overflow rate ≈ {vo:.1f} m/d<br>"
-                                                    f"Detention time ≈ {th:.2f} h<extra></extra>")), row=1, col=c)
-            pt_map.append(None)
-    for c, x in [(1, "Overflow rate (m/d)"), (2, "Detention time (h)")]:
-        d = design.sort_values(x)
-        fig.add_trace(go.Scatter(x=d[x], y=d["Overall removal (%)"], mode="lines", showlegend=False,
-                                 line=dict(color=ui.AXIS, width=2), hoverinfo="skip"), row=1, col=c)
+    if target is not None and xread is not None:
+        fig.add_shape(type="line", x0=0, x1=xread, y0=target, y1=target, line=dict(color=ui.INK, width=1.6, dash="dash"))
+        fig.add_shape(type="line", x0=xread, x1=xread, y0=0, y1=target, line=dict(color=ui.INK, width=1.6, dash="dash"))
+        fig.add_trace(go.Scatter(x=[xread], y=[target], mode="markers", showlegend=False,
+                                 marker=dict(symbol="star", size=15, color=ui.GOLD, line=dict(color=ui.INK, width=1.5)),
+                                 hovertemplate=f"<b>Target {target:g} %</b><br>{x_col.split(' (')[0]} ≈ {xread:.3g}<extra></extra>"))
         pt_map.append(None)
-        for _, r in design.iterrows():
-            p = int(r["Curve (%)"])
-            ex = r["Extrapolated"] == "Yes"
-            fig.add_trace(go.Scatter(
-                x=[r[x]], y=[r["Overall removal (%)"]], mode="markers", name=f"{p} %", legendgroup=str(p),
-                showlegend=(c == 1),
-                marker=dict(symbol=syms[p] + ("-open" if ex else ""), size=13, color=cols[p],
-                            line=dict(color=cols[p] if ex else "#ffffff", width=2.5 if ex else 1)),
-                hovertemplate=(f"<b>{p} % curve</b>{' (extrapolated)' if ex else ''}<br>Overflow rate: "
-                               f"{r['Overflow rate (m/d)']:.1f} m/d<br>Detention time: {r['Detention time (h)']:.2f} h"
-                               f"<br>Overall removal: {r['Overall removal (%)']:.1f} %<extra></extra>"),
-                selected=dict(marker=dict(size=18)), unselected=dict(marker=dict(opacity=1)),
-            ), row=1, col=c)
-            pt_map.append(p)
-    n_leg = len(design) + (1 if target is not None and read is not None else 0)
-    ui.base_layout(fig, height=380, legend_title="Isoremoval curve (hollow = extrapolated)", n_items=n_leg, per_row=4, top=56)
+    d = design.sort_values(x_col)
+    fig.add_trace(go.Scatter(x=d[x_col], y=d["Overall removal (%)"], mode="lines", showlegend=False,
+                             line=dict(color=ui.AXIS, width=2), hoverinfo="skip"))
+    pt_map.append(None)
+    for _, r in design.iterrows():
+        p = int(r["Curve (%)"])
+        ex = r["Extrapolated"] == "Yes"
+        fig.add_trace(go.Scatter(
+            x=[r[x_col]], y=[r["Overall removal (%)"]], mode="markers", showlegend=False,
+            marker=dict(symbol=syms[p] + ("-open" if ex else ""), size=13, color=cols[p],
+                        line=dict(color=cols[p] if ex else "#ffffff", width=2.5 if ex else 1)),
+            hovertemplate=(f"<b>{p} % curve</b>{' (extrapolated)' if ex else ''}<br>Overflow rate: "
+                           f"{r['Overflow rate (m/d)']:.1f} m/d<br>Detention time: {r['Detention time (h)']:.2f} h"
+                           f"<br>Overall removal: {r['Overall removal (%)']:.1f} %<extra></extra>"),
+            selected=dict(marker=dict(size=18)), unselected=dict(marker=dict(opacity=1))))
+        pt_map.append(p)
+    ui.base_layout(fig, height=360, legend_title=None, top=52)
+    fig.update_layout(showlegend=False, margin=dict(b=ui.XAXIS_BAND + 6),
+                      title=dict(text=title, x=0.5, xanchor="center", y=1, yref="container", yanchor="top", pad=dict(t=14),
+                                 font=dict(size=16, color=ui.INK, family=ui.FONT)))
     ylo = max(0, design["Overall removal (%)"].min() - 8)
-    fig.update_yaxes(**ui.style_axes(fig, range=[ylo, min(100, design["Overall removal (%)"].max() + 6)]))
-    fig.update_yaxes(title_text="Overall removal (%)", row=1, col=1)
-    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=12, rangemode="tozero"))
-    fig.update_xaxes(title_text="Overflow rate (m/d)", row=1, col=1)
-    fig.update_xaxes(title_text="Detention time (h)", row=1, col=2)
-    for a in fig.layout.annotations:
-        a.font = dict(size=16, color=ui.INK, family=ui.FONT)
+    fig.update_yaxes(**ui.style_axes(fig, range=[ylo, min(100, design["Overall removal (%)"].max() + 6)],
+                                     title_text="Overall removal (%)"))
+    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=14, rangemode="tozero", title_text=x_col))
     return fig, pt_map
+
+
+def design_legend(design, percents, target):
+    """One shared legend for the two design plots, as HTML so it wraps neatly at any width."""
+    cols = dict(zip(percents, ui.curve_colors(len(percents))))
+    syms = dict(zip(percents, ui.SYMBOLS))
+    def svg(sym, col, hollow):
+        fill = "#ffffff" if hollow else col
+        shapes = {
+            "circle": '<circle cx="9" cy="9" r="6"/>', "square": '<rect x="3.5" y="3.5" width="11" height="11"/>',
+            "diamond": '<polygon points="9,1.5 16.5,9 9,16.5 1.5,9"/>', "triangle-up": '<polygon points="9,2 16,15 2,15"/>',
+            "triangle-down": '<polygon points="2,3 16,3 9,16"/>', "star": '<polygon points="9,1 11.3,6.6 17.3,6.9 12.6,10.7 14.2,16.5 9,13.2 3.8,16.5 5.4,10.7 0.7,6.9 6.7,6.6"/>',
+        }
+        g = shapes.get(sym, '<path d="M6,2h6v4h4v6h-4v4h-6v-4h-4v-6h4z"/>' if sym == "cross" else
+                       '<path d="M3,5l2-2 4,4 4-4 2,2-4,4 4,4-2,2-4-4-4,4-2-2 4-4z"/>' if sym == "x" else '<circle cx="9" cy="9" r="6"/>')
+        stroke = col if hollow or sym != "star" else "#1b1a17"
+        return (f'<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><g fill="{fill}" stroke="{stroke}" '
+                f'stroke-width="{2 if hollow else 1}">{g}</g></svg>')
+    items = []
+    for _, r in design.iterrows():
+        p = int(r["Curve (%)"]); ex = r["Extrapolated"] == "Yes"
+        items.append(f'<span class="lg__i">{svg(syms[p], cols[p], ex)}{p} %{" (extrap.)" if ex else ""}</span>')
+    if target is not None:
+        items.append(f'<span class="lg__i">{svg("star", ui.GOLD, False)}Target {target:g} %</span>')
+    md('<div class="lg" role="group" aria-label="Legend for the two design plots"><div class="lg__t">Isoremoval curve '
+       '(hollow = extrapolated)</div><div class="lg__r">' + "".join(items) + '</div></div>')
 
 
 def profile_figure(z, r, unit, H, bands):
@@ -280,12 +295,12 @@ def profile_figure(z, r, unit, H, bands):
             line=dict(width=1.5, color="#ffffff"), fillcolor=fills[i % 2], showlegend=(i == 0),
             name="Strips of the shaded area",
             hovertemplate=f"<b>Strip {z0:g}–{z1:g} {unit}</b><br>Area: {area:.1f} %·{unit}<extra></extra>"))
-    fig.add_trace(go.Scatter(x=r, y=z, mode="lines+markers" if len(z) <= 14 else "lines", name="Removal at each depth",
+    fig.add_trace(go.Scatter(x=r, y=z, mode="lines+markers" if len(z) <= 14 else "lines", name="Removal at each depth", cliponaxis=False,
                              line=dict(color=ui.BLUE, width=3), marker=dict(size=9, color=ui.BLUE, line=dict(color="#fff", width=1)),
                              hovertemplate=f"Depth %{{y:.2f}} {unit}<br>Removal %{{x:.1f}} %<extra></extra>"))
     ui.base_layout(fig, height=360, n_items=2, per_row=1)
-    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=12, title_text="Percent removal at that moment (%)", range=[0, 105]))
-    fig.update_yaxes(**ui.style_axes(fig, title_text=f"Depth ({unit})", range=[H * 1.02, 0]))
+    fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=14, title_text="Removal at that moment (%)", range=[0, 104]))
+    fig.update_yaxes(**ui.style_axes(fig, title_text=f"Depth ({unit})", range=[H * 1.03, -0.03 * H]))
     return fig
 
 
@@ -636,11 +651,15 @@ than the curve's percentage.</p>""")
        "curve, drawn in the same colour and shape as on the curves chart. The two plots share the vertical axis, so a "
        "point sits at the same height in both.")
     wkey = f"worked-{key}"
-    clicked_d = _new_selection(f"design-{key}")
-    pmap = st.session_state.get(f"pmap-{key}", [])
+    pmaps = st.session_state.get(f"pmap-{key}", {})
     rows_p = design["Curve (%)"].tolist()
-    if clicked_d is not None and clicked_d.get("curve_number") is not None and clicked_d["curve_number"] < len(pmap):
-        pc = pmap[clicked_d["curve_number"]]
+    pc = None
+    for k_ in ("a", "b"):
+        cd = _new_selection(f"design-{key}-{k_}")
+        pm = pmaps.get(k_, []) if isinstance(pmaps, dict) else []
+        if cd is not None and cd.get("curve_number") is not None and cd["curve_number"] < len(pm):
+            pc = pm[cd["curve_number"]]
+    if pc is not None:
         if pc in rows_p:
             st.session_state[wkey] = pc
             st.session_state[f"wxn-{key}"] = st.session_state.get(f"wxn-{key}", 0) + 1
@@ -653,14 +672,22 @@ than the curve's percentage.</p>""")
         st.session_state[tkey] = float(np.clip(70.0, rmin, rmax))
     target = st.session_state[tkey]
     read = ic.read_design(design, target)
-    figd, pmap = design_figure(design, percents, target, (read[0], read[1]) if read else None)
-    st.session_state[f"pmap-{key}"] = pmap
-    ddesc = ("Two plots side by side sharing the overall-removal axis. Left: overall removal falls as the overflow rate "
-             "rises. Right: overall removal rises with detention time. Hollow points are extrapolated; the star marks "
-             "your target.")
+    vo_r, th_r = (read[0], read[1]) if read else (None, None)
+    ddesc = ("Two plots side by side with the same overall-removal axis. Left: overall removal falls as the overflow "
+             "rate rises. Right: overall removal rises with detention time. Hollow points are extrapolated; the star "
+             "marks your target.")
     ui.figure_description(ddesc)
-    st.plotly_chart(figd, theme=None, key=f"design-{key}", on_select="rerun", selection_mode="points",
-                    config=ui.plot_config("design_plots"), alt=ddesc)
+    g1, g2 = st.columns(2, gap="small")
+    pmaps = {}
+    for col, k_, x_col, ttl, xr, fname in [(g1, "a", "Overflow rate (m/d)", "Overall removal vs. overflow rate", vo_r, "removal_vs_overflow_rate"),
+                                            (g2, "b", "Detention time (h)", "Overall removal vs. detention time", th_r, "removal_vs_detention_time")]:
+        figd, pm = design_figure(design, percents, x_col, ttl, target if read else None, xr)
+        pmaps[k_] = pm
+        with col:
+            st.plotly_chart(figd, theme=None, key=f"design-{key}-{k_}", on_select="rerun", selection_mode="points",
+                            config=ui.plot_config(fname), alt=ddesc)
+    st.session_state[f"pmap-{key}"] = pmaps
+    design_legend(design, percents, target if read else None)
     ui.idea("Why two plots", f"""
 <p><b>Overflow rate sets the basin's surface area</b> (area = flow ÷ overflow rate). Lower overflow rate, bigger
 footprint, more removal. That's the left plot: removal falls as overflow rate rises.</p>

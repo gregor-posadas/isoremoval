@@ -266,6 +266,12 @@ h1, h2, h3 {{ letter-spacing: -0.005em; }}
 /* plots sit on white cards in both themes */
 [data-testid="stPlotlyChart"] {{ background: #ffffff; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }}
 .figure-desc {{ max-width: 72ch; }}
+/* shared legend for side-by-side charts: boxed, centred, wraps on narrow screens */
+.lg {{ background: #fff; color: {INK}; border: 1px solid {INK}; width: fit-content; max-width: 100%; margin: 6px auto 18px;
+  padding: 8px 14px 10px; text-align: center; font-size: 0.82rem; }}
+.lg__t {{ margin-bottom: 4px; }}
+.lg__r {{ display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; }}
+.lg__i {{ display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }}
 .sr {{ position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }}
 .skip-link {{ position: absolute; left: -9999px; }}
 .skip-link:focus {{ position: static; display: inline-block; padding: 8px 12px; outline: 3px solid var(--focus); }}
@@ -330,29 +336,35 @@ def plot_config(filename):
 
 
 def style_axes(fig, **kw):
-    ax = dict(automargin=True, showline=True, linecolor=AXIS, linewidth=1.2, ticks="outside", tickcolor=AXIS, ticklen=6,
+    ax = dict(automargin=False, title_standoff=14, showline=True, linecolor=AXIS, linewidth=1.2, ticks="outside", tickcolor=AXIS, ticklen=6,
               gridcolor=GRID, zeroline=False, title_font=dict(size=16, color=INK), tickfont=dict(size=14, color=INK),
               mirror=False)
     ax.update(kw)
     return ax
 
 
-def base_layout(fig, height, legend_title=None, legend_rows=1, top=24, n_items=None, per_row=4):
-    """White plot, Open Sans, boxed legend centred below the plotting area (never on top of data).
+LEFT_MARGIN = 104  # room for y tick labels, a 14 px standoff, the y title and ~24 px of padding to the card edge
+XAXIS_BAND = 88   # px below the plotting area for tick labels, the axis title and a gap before the legend
 
-    The bottom margin is sized for the x-axis (ticks + title, about 72 px), the legend box and a 22 px gap
-    between them, so Plotly never has to push the plot up and the legend never touches the axis title.
+
+def base_layout(fig, height, legend_title=None, legend_rows=1, top=24, n_items=None, per_row=4):
+    """White plot, Open Sans, boxed legend centred just below the x-axis title (never on top of data).
+
+    `height` is the plotting area's height. The legend is pinned to the bottom of the plotting area at a fixed
+    distance, so the gap to the axis title stays the same however many rows the legend wraps to; if it wraps
+    more on a narrow screen, Plotly grows the bottom margin to fit it.
     """
-    if n_items is not None:
-        legend_rows = -(-n_items // per_row)
-    legend_h = (30 if legend_title else 8) + 27 * legend_rows + 10
-    bottom = 72 + 22 + legend_h + 12
+    # Size the bottom margin for a one-row legend (desktop); on a narrow screen the legend wraps and Plotly's
+    # autoexpand grows the margin to fit, keeping the same gap below the axis title.
+    legend_rows = 1
+    legend_h = (32 if legend_title else 10) + 26 * legend_rows + 8
+    bottom = XAXIS_BAND + legend_h + 18
     fig.update_layout(
-        template="none", height=height + bottom, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        template="none", height=height + top + bottom, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         font=dict(family=FONT, size=15, color=INK),
-        margin=dict(l=16, r=16, t=top, b=bottom),
+        margin=dict(l=LEFT_MARGIN, r=36, t=top, b=bottom, autoexpand=True),
         hoverlabel=dict(bgcolor="#ffffff", bordercolor=INK, font=dict(family=FONT, size=15, color=INK)),
-        legend=dict(orientation="h", yref="container", y=12 / (height + bottom), yanchor="bottom", xanchor="center",
+        legend=dict(orientation="h", yref="paper", y=-XAXIS_BAND / height, yanchor="top", xanchor="center",
                     x=0.5, bgcolor="#ffffff", bordercolor=INK, borderwidth=1, font=dict(size=14),
                     title=dict(text=legend_title, side="top center") if legend_title else None,
                     itemclick="toggle", itemdoubleclick="toggleothers", tracegroupgap=6),

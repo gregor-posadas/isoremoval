@@ -102,17 +102,17 @@ def design_fig(design, percents, target=None, read=None):
             p = int(r["Curve (%)"]); ex = r["Extrapolated"] == "Yes"; mk = MPL_SYM.get(syms[p], "o")
             handles.append(Line2D([0], [0], marker=mk, ms=6, color=cols[p], mfc="white" if ex else cols[p], mec=cols[p],
                                   mew=1.2, ls="none", label=f"{p} %" + (" (extrap.)" if ex else "")))
+        lo = max(0, design["Overall removal (%)"].min() - 8)
+        a1.set_ylim(lo, min(100, design["Overall removal (%)"].max() + 6))
         if target is not None and read is not None:
             vo, th = read
             for ax, xv in [(a1, vo), (a2, th)]:
                 ax.plot([0, xv], [target, target], color=ui.INK, lw=0.9, ls="--", zorder=2)
-                ax.plot([xv, xv], [ax.get_ylim()[0], target], color=ui.INK, lw=0.9, ls="--", zorder=2)
+                ax.plot([xv, xv], [lo, target], color=ui.INK, lw=0.9, ls="--", zorder=2)
                 ax.plot([xv], [target], marker="*", ms=11, color=ui.GOLD, mec=ui.INK, mew=0.8, zorder=4, ls="none")
             handles.append(Line2D([0], [0], marker="*", ms=10, color=ui.GOLD, mec=ui.INK, mew=0.8, ls="none",
                                   label=f"Target {target:g} %: {vo:.1f} m/d, {th:.2f} h"))
         a1.set_ylabel("Overall removal (%)")
-        lo = max(0, design["Overall removal (%)"].min() - 8)
-        a1.set_ylim(lo, min(100, design["Overall removal (%)"].max() + 6))
         n = len(handles); ncol = min(n, 4); rows = -(-n // ncol)
         fig.subplots_adjust(left=0.1, right=0.98, top=0.96, wspace=0.08)
         _legend_below(fig, handles, "Isoremoval curve (hollow = extrapolated)", ncol)

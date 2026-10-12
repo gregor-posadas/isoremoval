@@ -8,6 +8,7 @@ import streamlit as st
 
 import iso_calc as ic
 import ui_theme as ui
+from explainers import LINKS, PICS
 import column_anim
 import report_figs
 import streamlit.components.v1 as components
@@ -65,7 +66,7 @@ D = {
 
 
 def T(text, key):
-    return term(text, D[key])
+    return term(text, D[key], more=LINKS.get(key), pic=PICS.get(key))
 
 
 # ---------------------------------------------------------------------------

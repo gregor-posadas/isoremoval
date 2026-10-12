@@ -70,14 +70,24 @@ def curve_colors(n):
 _ids = count(1)
 
 
-def term(text, definition, more=None):
-    """Inline HTML for a term with an explanation (use inside st.markdown(..., unsafe_allow_html=True))."""
+def term(text, definition, more=None, pic=None):
+    """Inline HTML for a term with an explanation (use inside st.markdown(..., unsafe_allow_html=True)).
+
+    more: a (label, url) pair or a list of them, shown as "Learn more" links. pic: a small inline SVG drawn above
+    the text (decorative; the words carry the meaning)."""
     i = next(_ids)
-    extra = (f' <a class="term__more" href="{more[1]}" target="_blank" rel="noopener">{html.escape(more[0])}'
-             f'<span class="sr"> (opens in a new tab)</span></a>') if more else ""
+    if more and isinstance(more[0], str):
+        more = [more]
+    links = ""
+    if more:
+        items = "".join(f'<span class="term__link"><a href="{u}" target="_blank" rel="noopener">{html.escape(l)}'
+                        f'<span class="sr"> (opens in a new tab)</span></a></span>' for l, u in more)
+        links = f'<span class="term__more">Learn more</span><span class="term__links">{items}</span>'
+    figure = f'<span class="term__pic">{pic}</span>' if pic else ""
+    cls = "term__tip has-pic" if pic else "term__tip"
     return (f'<span class="term"><button type="button" class="term__btn" aria-expanded="false" '
-            f'aria-controls="tt-{i}">{text}</button><span class="term__tip" id="tt-{i}" role="note" hidden>'
-            f'<span class="term__def">{definition}</span>{extra}</span></span>')
+            f'aria-controls="tt-{i}">{text}</button><span class="{cls}" id="tt-{i}" role="note" hidden>'
+            f'{figure}<span class="term__def">{definition}</span>{links}</span></span>')
 
 
 def md(text):
@@ -287,7 +297,17 @@ h1, h2, h3 {{ letter-spacing: -0.005em; }}
   font-weight: 400; line-height: 1.5; white-space: normal; text-align: left; }}
 .term__tip[hidden] {{ display: none; }}
 .term__def {{ display: block; }}
-.term__more {{ display: inline-block; margin-top: 6px; font-weight: 700; color: var(--ink); }}
+.term__tip.has-pic {{ width: min(23rem, calc(100vw - 32px)); }}
+.term__pic {{ display: block; background: #fff; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px;
+  margin: 0 0 10px; }}
+.term__pic .pic {{ display: block; width: 100%; height: auto; max-height: 130px; }}
+.term__pic text {{ font-family: {FONT}; }}
+.term__more {{ display: block; margin-top: 8px; font-size: 0.8rem; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink2); }}
+.term__links {{ display: block; margin-top: 2px; }}
+.term__link {{ display: block; margin: 3px 0; padding-left: 1em; text-indent: -1em; }}
+.term__link::before {{ content: "→ "; color: var(--ink2); }}
+.term__links a {{ color: var(--ink); font-weight: 600; }}
 /* reveal */
 .rv-on .rv {{ opacity: 0; transform: translateY(14px); }}
 .rv-on .rv.rv-in {{ opacity: 1; transform: none; transition: opacity 600ms cubic-bezier(.2,.6,.2,1),

@@ -12,6 +12,9 @@ import ui_theme as ui
 
 # Links shown to students. Leave a value empty to hide that link.
 BASIN_TOOL_URL = "https://github.com/gregor-posadas/Sedimentation-Basin-Generator"
+# The deployed basin app (https://....streamlit.app). When set, Step 4 shows a button that opens it with the
+# student's overflow rate, detention time and target already filled in.
+BASIN_APP_URL = ""
 WALKTHROUGH_URL = ""   # paste the walkthrough video link here once it's posted
 
 UNIT_NAMES = {"m": "meters (m)", "ft": "feet (ft)", "cm": "centimeters (cm)", "in": "inches (in)"}
@@ -194,9 +197,10 @@ def _sidebar():
         )
         if WALKTHROUGH_URL:
             st.markdown(f"[Watch the walkthrough video]({WALKTHROUGH_URL})")
-        if BASIN_TOOL_URL:
+        if BASIN_APP_URL or BASIN_TOOL_URL:
             st.markdown("### Next")
-            st.markdown(f"Take your design values to the [Sedimentation Basin Design tool]({BASIN_TOOL_URL}).")
+            st.markdown(f"Take your design values to the [Sedimentation Basin Design tool]"
+                        f"({BASIN_APP_URL or BASIN_TOOL_URL}).")
         st.markdown("### Display")
         st.caption("Light or dark follows your device. To change it, open the menu at the top right, then Settings.")
         st.caption("Built for CE 323 Environmental and Fluids Laboratory, Boise State University. "
@@ -441,7 +445,10 @@ def tool_page():
         st.markdown(f"For **{target:g} % overall removal**, read from your curves: overflow rate ≈ "
                     f"**{vo:,.1f} m/d** and detention time ≈ **{th:.2f} h** ({th * 60:.0f} min)."
                     + (" Part of this comes from extrapolated points." if ex else ""))
-        if BASIN_TOOL_URL:
+        if BASIN_APP_URL:
+            st.link_button("Open the Basin Design tool with these values",
+                           f"{BASIN_APP_URL}?vo={vo:.2f}&t={th:.3f}&R={target:g}", icon=":material/open_in_new:")
+        elif BASIN_TOOL_URL:
             st.markdown(f"Next, take these to the [Sedimentation Basin Design tool]({BASIN_TOOL_URL}).")
 
     g1, g2 = st.columns(2, gap="large")

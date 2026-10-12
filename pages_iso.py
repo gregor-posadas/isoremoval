@@ -100,7 +100,8 @@ def _compute(depths, times, conc, c0, H, cleanup, sigma, monotone, percents, uni
 
 
 @st.cache_data(show_spinner=False)
-def _replay_html(depths, times, used, c0, H, unit, munit, levels, monotone):
+def _replay_html(depths, times, used, c0, H, unit, munit, levels, monotone, version=None):
+    # version: column_anim.VERSION, so a new animation isn't hidden behind the cache
     rd = ic.removal_table(used, c0, depths, times)
     cv = ic.Curves(rd, H, list(levels), enforce_monotonicity=monotone)
     return column_anim.build(cv, depths, times, used, c0, unit, munit, levels)
@@ -504,10 +505,12 @@ detention time (which sets its volume).</p>
        f"surface and rides one of them, which is the isoremoval curve you'll draw in Step 4.")
     lo0, hi0 = float(np.clip(rd0.values, 0, 100).min()), float(np.clip(rd0.values, 0, 100).max())
     lv = [p for p in range(20, 100, 20) if lo0 - 10 <= p <= hi0 + 10] or [50]
-    components.html(_replay_html(depths, times, used0, float(c0), float(H), unit, munit, tuple(lv), monotone),
+    components.html(_replay_html(depths, times, used0, float(c0), float(H), unit, munit, tuple(lv), monotone,
+                                 column_anim.VERSION),
                     height=700, scrolling=False)
     st.caption("Use Play, Start over and the time slider (arrow keys work on it). The text under the animation reads out "
-               "the removal at each port. Particles are drawn only where your data say they are still suspended.")
+               "the removal at each port and the share of particles on the floor. Choose which curve the orange particle "
+               "rides, or turn it off, with the Follow one particle menu.")
 
     # ---------------- Step 3 ----------------
     ui.step_header(3, "Turn readings into percent removal", "step-3")

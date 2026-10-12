@@ -15,6 +15,7 @@ import json
 import numpy as np
 
 
+VERSION = "2-ranked-particles"   # bump when the animation changes (part of the page cache key)
 RANKS = np.arange(0.5, 100, 1.0)   # one particle "rank" per percent of the particles
 
 

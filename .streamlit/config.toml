@@ -1,0 +1,82 @@
+[server]
+enableStaticServing = true
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+font = "Atkinson, 'Atkinson Hyperlegible Next', system-ui, sans-serif"
+codeFont = "'Atkinson Mono', ui-monospace, monospace"
+baseFontSize = 18
+baseFontWeight = 400
+headingFontWeights = [700, 700, 700, 700, 700, 700]
+headingFontSizes = ["2.5rem", "1.75rem", "1.3rem", "1.1rem", "1rem", "1rem"]
+baseRadius = "0.35rem"
+showWidgetBorder = true
+linkUnderline = true
+
+[[theme.fontFaces]]
+family = "Atkinson"
+url = "app/static/fonts/AtkinsonHyperlegibleNext-Regular.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Atkinson"
+url = "app/static/fonts/AtkinsonHyperlegibleNext-Bold.woff2"
+weight = 700
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Atkinson"
+url = "app/static/fonts/AtkinsonHyperlegibleNext-RegularItalic.woff2"
+weight = 400
+style = "italic"
+
+[[theme.fontFaces]]
+family = "Atkinson Mono"
+url = "app/static/fonts/AtkinsonHyperlegibleMono-Regular.woff2"
+weight = 400
+style = "normal"
+
+# Light: warm paper, near-black ink. Borders are dark enough (3:1+) to see where each field is.
+[theme.light]
+primaryColor = "#385F96"
+backgroundColor = "#f6f2e9"
+secondaryBackgroundColor = "#ece6d8"
+textColor = "#1b1a17"
+linkColor = "#2d4f80"
+borderColor = "#857e6e"
+dataframeBorderColor = "#d4ccbb"
+dataframeHeaderBackgroundColor = "#ece6d8"
+codeBackgroundColor = "#ece6d8"
+blueColor = "#385F96"
+orangeColor = "#B8481A"
+redColor = "#9b1c1c"
+greenColor = "#1d6b45"
+yellowColor = "#8a6d00"
+
+[theme.light.sidebar]
+backgroundColor = "#ece6d8"
+secondaryBackgroundColor = "#f6f2e9"
+
+# Dark: black paper, white ink, lighter partners of the same blues.
+[theme.dark]
+primaryColor = "#9EB8DB"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#1c1c1c"
+textColor = "#ffffff"
+linkColor = "#9EB8DB"
+borderColor = "#8a8a8a"
+dataframeBorderColor = "#3d3d3d"
+dataframeHeaderBackgroundColor = "#1c1c1c"
+codeBackgroundColor = "#1c1c1c"
+blueColor = "#9EB8DB"
+orangeColor = "#ff8a4c"
+redColor = "#ff8a8a"
+greenColor = "#5ccf95"
+yellowColor = "#ffe27a"
+
+[theme.dark.sidebar]
+backgroundColor = "#121212"
+secondaryBackgroundColor = "#000000"

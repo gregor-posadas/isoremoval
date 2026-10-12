@@ -3,7 +3,7 @@
 A learning tool for CE 323 (Environmental and Fluids Laboratory, Boise State University). It turns
 settling-column readings into isoremoval (isoconcentration) curves and the two design plots for a
 sedimentation basin: overall removal against overflow rate, and overall removal against detention time.
-Those values then go into the [Sedimentation Basin Design tool](https://github.com/gregor-posadas/Sedimentation-Basin-Generator).
+Those values then go into the [Sedimentation Basin Design tool](https://sedimentationbasindesign.streamlit.app).
 
 **Live app:** https://isoremoval.streamlit.app · For learning; not certified for engineering design.
 

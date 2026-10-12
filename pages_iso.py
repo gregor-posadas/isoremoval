@@ -14,7 +14,7 @@ import ui_theme as ui
 BASIN_TOOL_URL = "https://github.com/gregor-posadas/Sedimentation-Basin-Generator"
 # The deployed basin app (https://....streamlit.app). When set, Step 4 shows a button that opens it with the
 # student's overflow rate, detention time and target already filled in.
-BASIN_APP_URL = ""
+BASIN_APP_URL = "https://sedimentationbasindesign.streamlit.app"
 WALKTHROUGH_URL = ""   # paste the walkthrough video link here once it's posted
 
 UNIT_NAMES = {"m": "meters (m)", "ft": "feet (ft)", "cm": "centimeters (cm)", "in": "inches (in)"}

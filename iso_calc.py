@@ -28,6 +28,8 @@ Changes from the October 2025 version (kept in tests/legacy_calc.py), and why:
 - Curves are extended past the last reading along their own last segment
   (the lecture's method) instead of extrapolating every port's removal in time,
   which could run past 100 %.
+- Above the first port, a curve is drawn as a straight line from the origin
+  (steady settling) until it reaches that port, instead of jumping down at t = 0.
 - Noisy readings can be made non-increasing over time at each port
   ("monotone clean-up", isotonic regression). Gaussian smoothing remains as an
   option, but it treats unevenly spaced readings as evenly spaced.
@@ -232,6 +234,24 @@ class Curves:
         if key not in self._cache:
             zs = np.array([0.0 if t == 0 else self._first_crossing(*self.profile(t, self.R_grid[:, i]), p)
                            for i, t in enumerate(self.grid)])
+            # Above the first port there are no readings. A removal level leaves the surface at a steady
+            # speed (discrete settling) until it reaches the first port, so draw that part as a straight
+            # line from the origin instead of jumping to the 100 %-to-first-port line at t = 0.
+            z1 = self.depths[0]
+            r1 = np.maximum.accumulate(self.R_grid[0])
+            hit = np.where(r1 >= p)[0]
+            if len(hit):
+                k = hit[0]
+                if k > 0:
+                    t0, t1_, a, b = self.grid[k - 1], self.grid[k], r1[k - 1], r1[k]
+                    tau = t0 + (t1_ - t0) * (p - a) / (b - a) if b > a else t1_
+                else:
+                    tau = self.grid[0]
+                early = self.grid < tau
+                zs[early] = z1 * self.grid[early] / tau
+            elif p < 100:
+                z_end = zs[-1] if np.isfinite(zs[-1]) else z1
+                zs = z_end * self.grid / self.t_last
             if self.monotone:   # a curve never moves back up
                 filled = np.where(np.isnan(zs), -np.inf, zs)
                 zs = np.where(np.isnan(zs), np.nan, np.maximum.accumulate(filled))

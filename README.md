@@ -39,10 +39,11 @@ exactly at a reading. Elsewhere it had three problems, now fixed:
 | Back-extrapolated removal before the first reading | 14–20 % removal reported at 2–5 min |
 | Bottom times read off a 5-minute grid | 40 % curve: 46.0 min instead of 44.4 min (overflow rate 78.3 vs 81.1 m/d) |
 | Ports dropped once extrapolated removal passed 100 % | late results based on 2 of 5 ports |
+| Curves jumped down at t = 0 above the first port | 50 % curve at 0.25 m after seconds; now leaves the surface steadily |
 
 Extrapolated results (curves that reach the bottom after the last reading) also change, because curves are now
 extended along their own last segment. For the sample data the 70 % curve reaches the bottom at 175 min
-(82.5 % overall removal) rather than 133 min (84.7 %). The app shows how far past the data each result is.
+(82.2 % overall removal) rather than 133 min (84.7 %). The app shows how far past the data each result is.
 
 ## Accessibility
 

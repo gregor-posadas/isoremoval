@@ -15,7 +15,7 @@ import json
 import numpy as np
 
 
-VERSION = "3-setup-intro"   # bump when the animation changes (part of the page cache key)
+VERSION = "4-setup-intro"   # bump when the animation changes (part of the page cache key)
 RANKS = np.arange(0.5, 100, 1.0)   # one particle "rank" per percent of the particles
 
 
@@ -68,6 +68,7 @@ canvas{display:block;width:100%}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px}
 button,select{font:inherit;min-height:44px;padding:0 14px;border:1.5px solid var(--ink);background:#fff;color:var(--ink);border-radius:6px;cursor:pointer}
 button.primary{background:var(--ink);color:#fff}
+button:disabled,select:disabled,input:disabled{opacity:.4;cursor:not-allowed}
 input[type=range]{flex:1 1 220px;min-width:180px;height:44px;accent-color:#385F96}
 label.ck{display:inline-flex;gap:6px;align-items:center;min-height:44px}
 :focus-visible{outline:3px solid var(--focus);outline-offset:2px}

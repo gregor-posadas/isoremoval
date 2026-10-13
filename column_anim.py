@@ -15,7 +15,7 @@ import json
 import numpy as np
 
 
-VERSION = "2-ranked-particles"   # bump when the animation changes (part of the page cache key)
+VERSION = "3-setup-intro"   # bump when the animation changes (part of the page cache key)
 RANKS = np.arange(0.5, 100, 1.0)   # one particle "rank" per percent of the particles
 
 
@@ -78,6 +78,7 @@ label.ck{display:inline-flex;gap:6px;align-items:center;min-height:44px}
 <div class="bar">
   <button id="play" class="primary" type="button" aria-pressed="false">▶ Play</button>
   <button id="restart" type="button">↺ Start over</button>
+  <button id="setup" type="button">⏭ Skip the set-up</button>
   <label class="sr" for="time">Time since the test started (minutes)</label>
   <input id="time" type="range" min="0" step="0.5" value="0">
   <label class="sr" for="speed">Playback speed</label>
@@ -127,8 +128,72 @@ folSel.innerHTML = '<option value="">Off</option>' + Object.keys(D.levels).map(k
 { const ks = Object.keys(D.levels); folSel.value = ks.includes("50") ? "50" : (ks[Math.floor(ks.length/2)] || ""); }
 function fnt(sz, w=400){ g.font = `${w} ${sz}px "Open Sans", system-ui, sans-serif`; }
 function txt(s,x,y,o={}){ g.save(); fnt(o.size||14,o.w||400); g.fillStyle=o.c||C.ink; g.textAlign=o.a||"left"; g.textBaseline=o.b||"alphabetic"; g.fillText(s,x,y); g.restore(); }
+/* ---- Set-up before t = 0: fill with turbid water, mix, mixer off, wait for the swirl to die down ---- */
+const IN = {fill: 4.5, mix: 4.5, coast: 4.2, hold: 1.4}; IN.total = IN.fill + IN.mix + IN.coast + IN.hold;
+let phase = "ready", it = 0, ilast = null;
+const SW = (() => { const dt = 0.02, n = Math.ceil(IN.total/dt) + 1;
+  const w = s => s < IN.fill ? 0.35 + 0.6*s/IN.fill : s < IN.fill+IN.mix ? 4.0
+    : s < IN.fill+IN.mix+IN.coast ? 4.0*Math.pow(1 - (s-IN.fill-IN.mix)/IN.coast, 2) : 0;
+  const th = [0]; for (let i = 1; i < n; i++) th.push(th[i-1] + w(i*dt)*dt);
+  const end = th[n-1], k = Math.max(1, Math.round(end/6.2832)), sc = k*6.2832/end;   // end exactly where it began
+  return {dt, th: th.map(v => v*sc), w: s => w(s)*sc}; })();
+const swirl = s => { const f = clamp(s/SW.dt, 0, SW.th.length-1), i = Math.min(Math.floor(f), SW.th.length-2); return lerp(SW.th[i], SW.th[i+1], f-i); };
+const smooth = u => { u = clamp(u, 0, 1); return u*u*(3 - 2*u); };
+/* Each particle circulates in one of three stacked eddies and comes back exactly to its starting place. */
+function introPos(p, s){ const NC = 3, hc = D.H/NC, c = Math.min(NC-1, Math.floor(p.z0/hc)), zc = (c+0.5)*hc;
+  const a = (c % 2 ? -1 : 1) * swirl(s), u = (p.x-0.5)/0.5, v = (p.z0-zc)/(hc/2), cu = Math.cos(a), su = Math.sin(a);
+  const om = SW.w(s), jx = 0.025*om/4*Math.sin(p.ph*7 + s*5), jz = 0.02*hc*om/4*Math.cos(p.ph*5 + s*4);
+  return {x: clamp(0.5 + 0.5*(u*cu - v*su) + jx, 0, 1), z: clamp(zc + (u*su + v*cu)*hc/2 + jz, 0.004, D.H-0.004)}; }
+function introText(s){ return s < IN.fill ? "Filling the column with the turbid water…"
+  : s < IN.fill+IN.mix ? "Mixing, so the particles are spread evenly…"
+  : s < IN.fill+IN.mix+IN.coast ? "Mixer off: waiting for the water to go still…"
+  : "Still. Start the clock: t = 0 min."; }
+function tint(k){ const a = [219,230,243], b = [214,203,176]; return `rgb(${a.map((x,i)=>Math.round(lerp(x, b[i], k))).join(",")})`; }
 function resize(){ const w = cv.parentElement.clientWidth - 28; const dpr = window.devicePixelRatio||1;
   W = Math.max(300, w); H = W < 640 ? 390 : 470; cv.width = W*dpr; cv.height = H*dpr; cv.style.height = H+"px"; g.setTransform(dpr,0,0,dpr,0,0); draw(); }
+function drawPorts(colX, colY, colW, pxm){
+  D.depths.forEach((d,i) => { const y = colY + d*pxm, f = flash[i] || 0;
+    g.strokeStyle = f ? C.orange : C.ink; g.lineWidth = 6; g.beginPath(); g.moveTo(colX+colW+5, y); g.lineTo(colX+colW+34, y); g.stroke();
+    g.fillStyle = f ? C.orange : C.ink; g.fillRect(colX+colW+30, y-9, 14, 18);
+    txt(`${d} ${D.unit}`, colX+colW+52, y+5, {size:13, c:C.ink2}); }); }
+function drawIntro(colX, colY, colW, colH, pxm){
+  const s = it, narrow = W < 640, fillF = smooth(s/IN.fill), topZ = D.H*(1 - fillF), wy = colY + colH*(1 - fillF);
+  // water rising from the floor
+  if (fillF > 0) { g.fillStyle = tint(0.8); g.fillRect(colX, wy, colW, colY + colH - wy);
+    if (fillF > 0.995) { g.strokeStyle = C.blue; g.lineWidth = 2.5; g.beginPath(); g.moveTo(colX, colY); g.lineTo(colX+colW, colY); g.stroke(); } }
+  // the mixer: a shaft with three paddles, one in each eddy; it spins only while switched on
+  const ms = s - IN.fill, spin = 7*(clamp(ms, 0, IN.mix) + 0.25*clamp(ms - IN.mix, 0, 0.5)), cx = colX + colW/2;
+  const lift = smooth((s - IN.fill - IN.mix - IN.coast)/IN.hold), ma = 1 - lift;
+  if (ma > 0.01) { g.save(); g.globalAlpha = ma; g.translate(0, -lift*40);
+    g.strokeStyle = "#5d5a52"; g.lineWidth = 4; g.beginPath(); g.moveTo(cx, colY - 22); g.lineTo(cx, colY + colH - 14); g.stroke();
+    for (let c = 0; c < 3; c++) { const y = colY + (c + 0.5)*colH/3, hw = Math.max(3, 0.34*colW*Math.abs(Math.cos(spin + c*0.7)));
+      g.fillStyle = "#5d5a52"; g.fillRect(cx - hw, y - 4, 2*hw, 8); }
+    g.restore(); }
+  // particles: carried round by the eddies, and only where there is water yet
+  g.fillStyle = "rgba(77,74,67,0.78)";
+  PARTS.forEach(p => { const q = introPos(p, s); if (q.z < topZ) return;
+    g.beginPath(); g.arc(colX+5+q.x*(colW-10), colY+q.z*pxm, p.s, 0, 6.283); g.fill(); });
+  // the inflow: a stream of turbid water from above while filling
+  const sa = 1 - smooth((s - IN.fill + 0.4)/0.4);
+  if (sa > 0.01 && fillF < 1) { g.save(); g.globalAlpha = sa; g.fillStyle = tint(1.0);
+    g.fillRect(cx - 4, 0, 8, Math.max(0, wy - 0)); g.restore(); }
+  txt("0", colX-14, colY+5, {a:"right", size:13, c:C.ink2}); txt(`${D.H} ${D.unit}`, colX-14, colY+colH+5, {a:"right", size:13, c:C.ink2});
+  drawPorts(colX, colY, colW, pxm);
+  if (s >= IN.fill + IN.mix + IN.coast) txt("t = 0 min", colX+colW/2, colY-30, {a:"center", size:16, w:700});
+  const msg = introText(s);
+  if (narrow) { g.save(); fnt(13, 700); g.fillStyle = C.ink; const words = msg.split(" "); let line = "", yy = H - 26;
+      const lines = []; words.forEach(w => { const tt = line ? line + " " + w : w; if (g.measureText(tt).width > W - 24 && line) { lines.push(line); line = w; } else line = tt; });
+      lines.push(line); yy = H - 9 - 17*(lines.length - 1); lines.forEach(l => { g.fillText(l, 12, yy); yy += 17; }); g.restore(); return; }
+  txt(msg, colX - 40, H - 12, {size:13, w:700});
+  const tx = colX + colW + 140, maxW = W - tx - 10;
+  txt("Setting up the test", tx, 60, {size:14, w:700});
+  g.save(); fnt(13); g.fillStyle = C.ink2; let line = "", yy = 86;
+  ("Before any readings are taken, the column is filled with the water to be treated and mixed so the particles " +
+   "are spread evenly from top to bottom. When the mixer is switched off the water keeps circling for a while, so " +
+   "the test waits until it is still. Only then does the clock start at t = 0, and the particles begin to settle.")
+    .split(" ").forEach(w => { const tt = line ? line + " " + w : w; if (g.measureText(tt).width > maxW && line) { g.fillText(line, tx, yy); yy += 19; line = w; } else line = tt; });
+  if (line) g.fillText(line, tx, yy); g.restore();
+}
 function draw(){
   g.clearRect(0,0,W,H);
   const narrow = W < 640;
@@ -136,14 +201,16 @@ function draw(){
   const pxm = colH / D.H, pr = portRem(t);
   // column
   g.fillStyle = "#fbfaf7"; g.strokeStyle = C.ink; g.lineWidth = 2.5; g.beginPath(); g.roundRect(colX-5, colY-20, colW+10, colH+26, 10); g.fill(); g.stroke();
-  g.fillStyle = C.water; g.fillRect(colX, colY, colW, colH);
+  const intro = phase !== "settle";
+  const fl = intro ? 0 : series(D.floor, t), band = fl/100 * 38;
+  if (intro) { drawIntro(colX, colY, colW, colH, pxm); return; }
+  g.fillStyle = tint(0.8*(1 - fl/100)); g.fillRect(colX, colY, colW, colH);   // the water clears as particles leave it
   g.strokeStyle = C.blue; g.lineWidth = 2.5; g.beginPath(); g.moveTo(colX, colY); g.lineTo(colX+colW, colY); g.stroke();
   g.fillStyle = "rgba(77,74,67,0.78)";
   PARTS.forEach(p => { const z = p.z0 + curveDepth(p.k, t); if (z >= D.H) return;   // on the floor: part of the sludge
     const x = clamp(p.x + 0.006*Math.sin(p.ph + t*0.4), 0, 1);
     g.beginPath(); g.arc(colX+5+x*(colW-10), colY+Math.max(z, 0.004)*pxm, p.s, 0, 6.283); g.fill(); });
   // sludge: its thickness grows with the share of particles on the floor (drawn thicker than true scale)
-  const fl = series(D.floor, t), band = fl/100 * 38;
   if (band > 0.3) { g.fillStyle = C.sludge; g.fillRect(colX, colY+colH-band, colW, band);
     if (band > 15) txt("sludge", colX+colW*0.27, colY+colH-band/2+4, {a:"center", size:12, c:"#fff", w:700}); }
   // depth scale
@@ -154,11 +221,7 @@ function draw(){
       .map(([k, z]) => [k, colY + z*pxm]).sort((a, b) => a[1] - b[1]).forEach(([k, y]) => {
       g.strokeStyle = LVCOL[k]; g.lineWidth = 2.5; g.setLineDash([6,4]); g.beginPath(); g.moveTo(colX-2, y); g.lineTo(colX+colW+2, y); g.stroke(); g.setLineDash([]);
       if (y - lastY >= 13) { txt(`${k} %`, colX-8, y+4, {a:"right", size:12, w:700, c:LVCOL[k]}); lastY = y; } }); }
-  // ports
-  D.depths.forEach((d,i) => { const y = colY + d*pxm, f = flash[i] || 0;
-    g.strokeStyle = f ? C.orange : C.ink; g.lineWidth = 6; g.beginPath(); g.moveTo(colX+colW+5, y); g.lineTo(colX+colW+34, y); g.stroke();
-    g.fillStyle = f ? C.orange : C.ink; g.fillRect(colX+colW+30, y-9, 14, 18);
-    txt(`${d} ${D.unit}`, colX+colW+52, y+5, {size:13, c:C.ink2}); });
+  drawPorts(colX, colY, colW, pxm);
   // the followed particle starts at the surface and rides its curve (it sits on that curve's dashed line)
   const fk = folSel.value;
   if (fk) { const k = clamp(Math.round(+fk - 0.5), 0, NR-1), z = curveDepth(k, t), down = z >= D.H;
@@ -205,8 +268,21 @@ function announce(){ const pr = portRem(t); live.textContent = `At ${t.toFixed(0
 function tick(ts){ if (!playing) { last = null; return; } if (last != null) { const dt = (ts - last)/1000;
     setT(t + dt * (+document.getElementById("speed").value)); Object.keys(flash).forEach(k => { flash[k] = Math.max(0, flash[k] - dt*1.5); if (!flash[k]) delete flash[k]; }); }
   last = ts; if (t >= D.tlast) { stop(); announce(); return; } requestAnimationFrame(tick); }
-function start(){ if (t >= D.tlast) setT(0); playing = true; playBtn.textContent = "❚❚ Pause"; playBtn.setAttribute("aria-pressed","true"); requestAnimationFrame(tick); }
+function start(){ if (phase !== "settle") return; if (t >= D.tlast) setT(0); playing = true; playBtn.textContent = "❚❚ Pause"; playBtn.setAttribute("aria-pressed","true"); requestAnimationFrame(tick); }
 function stop(){ playing = false; playBtn.textContent = "▶ Play"; playBtn.setAttribute("aria-pressed","false"); }
+const setupBtn = document.getElementById("setup"), locked = ["play","restart","time","speed","lv","fol"].map(id => document.getElementById(id));
+function lock(on){ locked.forEach(el => el.disabled = on); setupBtn.textContent = on ? "⏭ Skip the set-up" : "↻ Watch the set-up again"; }
+let lastMsg = "";
+function introTick(ts){ if (phase !== "intro") { ilast = null; return; }
+  if (ilast != null) it += (ts - ilast)/1000; ilast = ts;
+  const m = introText(it); if (m !== lastMsg) { live.textContent = m; lastMsg = m; }
+  if (it >= IN.total) { endIntro(true); return; }
+  draw(); requestAnimationFrame(introTick); }
+function startIntro(){ stop(); phase = "intro"; it = 0; ilast = null; lastMsg = ""; lock(true); requestAnimationFrame(introTick); }
+function endIntro(play){ phase = "settle"; ilast = null; lock(false); setT(0, true); announce();
+  live.textContent = "Set-up done: the column was filled, mixed and left until still. " + live.textContent;
+  if (play && !reduce) start(); }
+setupBtn.onclick = () => phase === "intro" ? endIntro(false) : startIntro();
 playBtn.onclick = () => playing ? (stop(), announce()) : start();
 document.getElementById("restart").onclick = () => { stop(); setT(0, true); announce(); };
 slider.oninput = () => { stop(); setT(+slider.value, true); };
@@ -216,8 +292,11 @@ folSel.onchange = draw;
 window.addEventListener("resize", resize);
 window.__redraw = resize;
 /* hook for recording: deterministic frame at time tt */
-window.__anim = { render: tt => { flash = {}; D.times.forEach(tm => { if (tt >= tm && tt - tm < 0.6*8) D.depths.forEach((_,i)=> flash[i] = 1 - (tt-tm)/(0.6*8)); }); t = clamp(tt,0,D.tlast); slider.value = t; draw(); }, duration: D.tlast };
+window.__anim = { intro: s => { phase = "intro"; it = clamp(s, 0, IN.total); draw(); }, introDuration: IN.total,
+  render: tt => { phase = "settle"; flash = {}; D.times.forEach(tm => { if (tt >= tm && tt - tm < 0.6*8) D.depths.forEach((_,i)=> flash[i] = 1 - (tt-tm)/(0.6*8)); }); t = clamp(tt,0,D.tlast); slider.value = t; draw(); }, duration: D.tlast };
 document.fonts && document.fonts.load('400 14px "Open Sans"').finally(resize);
-resize(); announce();
-if (!reduce && "IntersectionObserver" in window) { const io = new IntersectionObserver(es => { if (es[0].isIntersecting) { io.disconnect(); setTimeout(start, 400); } }, {threshold: 0.6}); io.observe(cv); }
+if (reduce) { phase = "settle"; lock(false); resize(); announce(); }
+else { lock(true); resize(); live.textContent = "The set-up (filling, mixing, waiting for the water to go still) plays when this comes into view.";
+  if ("IntersectionObserver" in window) { const io = new IntersectionObserver(es => { if (es[0].isIntersecting) { io.disconnect(); setTimeout(startIntro, 300); } }, {threshold: 0.5}); io.observe(cv); }
+  else startIntro(); }
 </script></body></html>"""

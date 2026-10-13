@@ -367,7 +367,10 @@ LEFT_MARGIN = 104  # room for y tick labels, a 14 px standoff, the y title and ~
 XAXIS_BAND = 88   # px below the plotting area for tick labels, the axis title and a gap before the legend
 
 
-def base_layout(fig, height, legend_title=None, legend_rows=1, top=24, n_items=None, per_row=4):
+TITLE_BAND = 44
+
+
+def base_layout(fig, height, legend_title=None, legend_rows=1, top=24, n_items=None, per_row=4, title=None):
     """White plot, Open Sans, boxed legend centred just below the x-axis title (never on top of data).
 
     `height` is the plotting area's height. The legend is pinned to the bottom of the plotting area at a fixed
@@ -377,6 +380,8 @@ def base_layout(fig, height, legend_title=None, legend_rows=1, top=24, n_items=N
     # Size the bottom margin for a one-row legend (desktop); on a narrow screen the legend wraps and Plotly's
     # autoexpand grows the margin to fit, keeping the same gap below the axis title.
     legend_rows = 1
+    if title:
+        top += TITLE_BAND
     legend_h = (32 if legend_title else 10) + 26 * legend_rows + 8
     bottom = XAXIS_BAND + legend_h + 18
     fig.update_layout(
@@ -390,4 +395,7 @@ def base_layout(fig, height, legend_title=None, legend_rows=1, top=24, n_items=N
                     itemclick="toggle", itemdoubleclick="toggleothers", tracegroupgap=6),
         clickmode="event+select", dragmode="zoom", hovermode="closest",
     )
+    if title:
+        fig.update_layout(title=dict(text=f"<b>{title}</b>", x=0.5, xanchor="center", y=1, yref="container",
+                                     yanchor="top", pad=dict(t=14), font=dict(size=17, color=INK, family=FONT)))
     return fig

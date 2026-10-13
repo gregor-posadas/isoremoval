@@ -78,7 +78,8 @@ def curves_fig(cv, percents, unit, curve_points):
         n = len(handles)
         ncol = min(n, 5)
         rows = -(-n // ncol)
-        fig.subplots_adjust(left=0.11, right=0.97, top=0.93)
+        fig.suptitle("Isoremoval curves", fontweight="bold", fontsize=12.5, y=0.985)
+        fig.subplots_adjust(left=0.11, right=0.97, top=0.885)
         _legend_below(fig, handles, "Isoremoval curve (percent removal)", ncol)
     return fig, far
 
@@ -114,7 +115,8 @@ def design_fig(design, percents, target=None, read=None):
                                   label=f"Target {target:g} %: {vo:.1f} m/d, {th:.2f} h"))
         a1.set_ylabel("Overall removal (%)")
         n = len(handles); ncol = min(n, 4); rows = -(-n // ncol)
-        fig.subplots_adjust(left=0.1, right=0.98, top=0.96, wspace=0.08)
+        fig.suptitle("Overall removal vs. overflow rate and detention time", fontweight="bold", fontsize=12.5, y=0.985)
+        fig.subplots_adjust(left=0.1, right=0.98, top=0.9, wspace=0.08)
         _legend_below(fig, handles, "Isoremoval curve (hollow = extrapolated)", ncol)
     return fig
 
@@ -133,7 +135,8 @@ def profile_fig(z, r, unit, H, bands, p, t_b):
         area = float(np.trapezoid(r, z))
         ax.set_ylim(H * 1.02, 0); ax.set_xlim(0, 105)
         ax.set_xlabel(f"Percent removal at {t_b:g} min (%)"); ax.set_ylabel(f"Depth ({unit})")
-        ax.set_title(f"{p} % curve: area {area:.1f} %·{unit}, overall removal {area / H:.1f} %", fontsize=9.5)
+        fig.suptitle(f"Removal profile at {t_b:g} min ({p} % curve)", fontweight="bold", fontsize=12.5)
+        ax.set_title(f"Area {area:.1f} %·{unit}, overall removal {area / H:.1f} %", fontsize=9.5)
         fig.tight_layout()
     return fig
 

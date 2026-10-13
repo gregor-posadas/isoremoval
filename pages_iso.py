@@ -15,6 +15,7 @@ import streamlit.components.v1 as components
 from ui_theme import term, md
 
 BASIN_APP_URL = "https://sedimentationbasindesign.streamlit.app/"
+BYHAND_PAGE = None     # set by the app entry point: the "method by hand" page
 WALKTHROUGH_URL = ""   # paste the walkthrough video link here once it's posted
 
 UNIT_NAMES = {"m": "meters (m)", "ft": "feet (ft)", "cm": "centimeters (cm)", "in": "inches (in)"}
@@ -210,7 +211,7 @@ def curves_figure(cv, percents, unit, follow=None):
     fig.add_annotation(x=cv.t_last, y=1.0, yref="paper", yanchor="bottom", text=f"last reading ({cv.t_last:g} min)",
                        showarrow=False, font=dict(size=13, color=ui.INK2), xanchor="center")
     ui.base_layout(fig, height=440, legend_title="Isoremoval curve (percent removal)", n_items=len(percents), per_row=4,
-                   top=36)
+                   top=36, title="Isoremoval curves")
     fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=14, title_text="Time since the test started (min)", range=[0, xmax]))
     fig.update_yaxes(**ui.style_axes(fig, title_text=f"Depth below the water surface ({unit})",
                                      range=[cv.H * 1.02, -0.04 * cv.H]))
@@ -247,10 +248,8 @@ def design_figure(design, percents, x_col, title, target=None, xread=None, show_
                            f"<br>Overall removal: {r['Overall removal (%)']:.1f} %<extra></extra>"),
             selected=dict(marker=dict(size=18)), unselected=dict(marker=dict(opacity=1))))
         pt_map.append(p)
-    ui.base_layout(fig, height=360, legend_title=None, top=52)
-    fig.update_layout(showlegend=False, margin=dict(b=ui.XAXIS_BAND + 6),
-                      title=dict(text=title, x=0.5, xanchor="center", y=1, yref="container", yanchor="top", pad=dict(t=14),
-                                 font=dict(size=16, color=ui.INK, family=ui.FONT)))
+    ui.base_layout(fig, height=360, legend_title=None, top=12, title=title)
+    fig.update_layout(showlegend=False, margin=dict(b=ui.XAXIS_BAND + 6))
     ylo = max(0, design["Overall removal (%)"].min() - 8)
     fig.update_yaxes(**ui.style_axes(fig, range=[ylo, min(100, design["Overall removal (%)"].max() + 6)],
                                      title_text="Overall removal (%)"))
@@ -284,7 +283,7 @@ def design_legend(design, percents, target):
        '(hollow = extrapolated)</div><div class="lg__r">' + "".join(items) + '</div></div>')
 
 
-def profile_figure(z, r, unit, H, bands):
+def profile_figure(z, r, unit, H, bands, title="Removal at each depth"):
     fig = go.Figure()
     fills = ["#c9d8ec", "#a9c1e0"]
     for i, (z0, z1) in enumerate(bands):
@@ -300,7 +299,7 @@ def profile_figure(z, r, unit, H, bands):
     fig.add_trace(go.Scatter(x=r, y=z, mode="lines+markers" if len(z) <= 14 else "lines", name="Removal at each depth", cliponaxis=False,
                              line=dict(color=ui.BLUE, width=3), marker=dict(size=9, color=ui.BLUE, line=dict(color="#fff", width=1)),
                              hovertemplate=f"Depth %{{y:.2f}} {unit}<br>Removal %{{x:.1f}} %<extra></extra>"))
-    ui.base_layout(fig, height=360, n_items=2, per_row=1)
+    ui.base_layout(fig, height=360, n_items=2, per_row=1, top=14, title=title)
     fig.update_xaxes(**ui.style_axes(fig, automargin=False, title_standoff=14, title_text="Removal at that moment (%)", range=[0, 104]))
     fig.update_yaxes(**ui.style_axes(fig, title_text=f"Depth ({unit})", range=[H * 1.03, -0.03 * H]))
     return fig
@@ -327,6 +326,8 @@ def _sidebar():
             "5. [Curves to design values](#step-5)\n"
             "6. [Read your design values](#step-6)"
         )
+        if BYHAND_PAGE is not None:
+            st.page_link(BYHAND_PAGE, label="The method by hand", icon=":material/edit_note:")
         if WALKTHROUGH_URL:
             st.markdown(f"[Watch the walkthrough video]({WALKTHROUGH_URL})")
         st.markdown("### Next")
@@ -495,7 +496,9 @@ detention time (which sets its volume).</p>
     rd0 = ic.removal_table(used0, c0, depths, times)
 
     st.subheader("Replay your test", anchor="replay")
-    md(f"This is your {T('settling column', 'column')}, rebuilt from your readings. Press play to watch it settle. Each dot "
+    md(f"This is your {T('settling column', 'column')}, rebuilt from your readings. It begins with the set-up "
+       f"you did in the lab: the column fills with the turbid water, a mixer spreads the particles evenly, and once "
+       f"it is switched off you wait for the water to stop swirling. Only then does the clock start at t = 0. Each dot "
        f"is a particle, and each one sinks along its own isoremoval curve, so the dots go exactly where your readings "
        f"say: at every port and sampling time, the share of dots still above the port matches your measured removal. "
        f"Because the particles stick together and grow ({T('flocculent settling', 'floc')}), every dot speeds up as "
@@ -508,7 +511,7 @@ detention time (which sets its volume).</p>
     components.html(_replay_html(depths, times, used0, float(c0), float(H), unit, munit, tuple(lv), monotone,
                                  column_anim.VERSION),
                     height=700, scrolling=False)
-    st.caption("Use Play, Start over and the time slider (arrow keys work on it). The text under the animation reads out "
+    st.caption("Skip the set-up if you've seen it. Then use Play, Start over and the time slider (arrow keys work on it). The text under the animation reads out "
                "the removal at each port and the share of particles on the floor. Choose which curve the orange particle "
                "rides, or turn it off, with the Follow one particle menu.")
 
@@ -565,6 +568,13 @@ faster ones have made it in the same time. Meanwhile particles from above are st
         st.stop()
     used, rd, cv, design, depth_tab = _compute(depths, times, conc, float(c0), float(H), cleanup, float(sigma),
                                                 monotone, tuple(percents), unit)
+    # the "method by hand" page shows the same data worked the traditional way
+    st.session_state["byhand_data"] = {"depths": depths.tolist(), "times": times.tolist(),
+                                       "conc": np.asarray(conc, float).tolist(), "c0": float(c0), "unit": unit,
+                                       "munit": munit, "levels": list(percents), "source": source, "H": float(H)}
+    if BYHAND_PAGE is not None:
+        st.page_link(BYHAND_PAGE, label="See how this was done by hand, step by step (with animations)",
+                     icon=":material/edit_note:")
 
     # a click on the chart picks the curve to follow
     fkey = f"follow-{key}"
@@ -813,7 +823,7 @@ def _removal_example(cv, design, unit, wkey, depths):
         pdesc = (f"Removal against depth at {t_b:g} min, with the area under the line shaded in strips, one strip "
                  "between each pair of ports.")
         ui.figure_description(pdesc)
-        st.plotly_chart(profile_figure(z, r, unit, cv.H, bands), theme=None, key=f"profile-{p}",
+        st.plotly_chart(profile_figure(z, r, unit, cv.H, bands, f"Removal profile at {t_b:.0f} min"), theme=None, key=f"profile-{p}",
                         config=ui.plot_config(f"removal_profile_{p}pct"), alt=pdesc)
     with right:
         area_rows = []
